@@ -1,80 +1,46 @@
-// ─────────────────────────────────────────────────────────────
-// js/auth.js — ระบบล็อกอิน Firebase Authentication (Email/Password)
-// ใช้ร่วมกันโดย login.js / signup.js (หน้าสมัคร/เข้าสู่ระบบ) และ
-// common.js (auth guard ของทุกหน้าจอที่ต้องล็อกอินก่อนใช้งาน)
-// ─────────────────────────────────────────────────────────────
-
+// js/auth.js — Firebase Authentication (Email/Password) + โปรไฟล์ users/{uid}
 import { auth, db } from "./firebase-config.js";
 import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut
+  signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, updateProfile
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
-import {
-  collection,
-  doc,
-  setDoc,
-  query,
-  where,
-  getDocs
-} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
-const ERROR_MESSAGE_TH = {
-  "auth/invalid-email": "รูปแบบอีเมลไม่ถูกต้อง",
-  "auth/user-not-found": "ไม่พบบัญชีผู้ใช้นี้ในระบบ",
-  "auth/wrong-password": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
-  "auth/invalid-credential": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
-  "auth/too-many-requests": "ลองผิดหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่",
-  "auth/email-already-in-use": "อีเมลนี้มีบัญชีอยู่แล้วในระบบ",
-  "auth/weak-password": "รหัสผ่านสั้นเกินไป (อย่างน้อย 6 ตัวอักษร)"
-};
-
-export function mapAuthError(err) {
-  return ERROR_MESSAGE_TH[err.code] || ("เกิดข้อผิดพลาด: " + err.message);
+export async function getUserProfile(uid) {
+  const snap = await getDoc(doc(db, "users", uid));
+  return snap.exists() ? { user_id: snap.id, ...snap.data() } : null;
 }
 
-export async function login(email, password) {
-  const cred = await signInWithEmailAndPassword(auth, email, password);
+export async function signIn(email, pw) {
+  const cred = await signInWithEmailAndPassword(auth, email, pw);
   return cred.user;
 }
 
-// สมัครสมาชิก: สร้างบัญชี Firebase Auth แล้วสร้างเอกสารผู้ใช้ใน Firestore
-// collection "users" ผูกกันด้วย email ทันที — role (PM/BA/SA/DEV/IMP ตาม
-// ACL.md) เลือกตอนสมัครและเก็บไว้ในเอกสารนี้ แต่ยังเป็นแค่ label ข้อมูล
-// ไม่ได้ใช้บังคับสิทธิ์จริงใน firestore.rules หรือ UI (role-based access
-// control ยังตัดออกจากสโคปตาม SCOPE.md)
-export async function signup(name, email, password, role) {
+// สร้างบัญชี Auth + เอกสาร users/{uid}
+export async function signUp({ name, email, password, role }) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
-  const userRef = doc(collection(db, "users"));
-  await setDoc(userRef, { name: name, email: email, role: role, is_active: true });
+  try { await updateProfile(cred.user, { displayName: name }); } catch (e) { /* ไม่สำคัญ */ }
+  await setDoc(doc(db, "users", cred.user.uid), { name, email, role, is_active: true });
   return cred.user;
 }
 
-export async function logout() {
-  await signOut(auth);
-  window.location.replace("login.html");
+export function signOutUser() {
+  return signOut(auth);
 }
 
-// เรียกจากหน้าที่ต้องล็อกอินก่อนใช้งาน (ทุกหน้ายกเว้น login.html/signup.html)
-// คืนค่า Promise<{id, name, email, role}> ของผู้ใช้ที่ล็อกอินอยู่ — ถ้ายังไม่
-// ล็อกอิน จะ redirect ไป login.html ทันที (Promise นี้จะไม่ resolve ในกรณีนั้น)
-export function guardPage() {
-  return new Promise(function (resolve) {
-    onAuthStateChanged(auth, async function (firebaseUser) {
-      if (!firebaseUser) {
-        window.location.replace("login.html");
-        return;
-      }
-      const q = query(collection(db, "users"), where("email", "==", firebaseUser.email));
-      const snap = await getDocs(q);
-      if (snap.empty) {
-        await signOut(auth);
-        window.location.replace("login.html?error=account-not-linked");
-        return;
-      }
-      const userDoc = snap.docs[0];
-      resolve({ id: userDoc.id, name: userDoc.data().name, email: userDoc.data().email, role: userDoc.data().role || null });
-    });
-  });
+// แปลง error ของ Firebase เป็นข้อความไทย
+export function authErrorMessage(err) {
+  const map = {
+    "auth/invalid-email": "รูปแบบอีเมลไม่ถูกต้อง",
+    "auth/user-not-found": "ไม่พบบัญชีนี้ในระบบ",
+    "auth/wrong-password": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+    "auth/invalid-credential": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
+    "auth/user-disabled": "บัญชีนี้ถูกระงับการใช้งาน",
+    "auth/too-many-requests": "พยายามหลายครั้งเกินไป กรุณารอสักครู่แล้วลองใหม่",
+    "auth/network-request-failed": "เชื่อมต่อเครือข่ายไม่ได้ กรุณาลองใหม่",
+    "auth/email-already-in-use": "อีเมลนี้ถูกใช้สมัครแล้ว",
+    "auth/weak-password": "รหัสผ่านสั้นเกินไป (อย่างน้อย 6 ตัวอักษร)",
+    "auth/operation-not-allowed": "ยังไม่ได้เปิดใช้ Email/Password ใน Firebase Console",
+    "permission-denied": "ไม่มีสิทธิ์เขียนข้อมูล (ตรวจสอบ firestore.rules)"
+  };
+  return map[err?.code] || "เกิดข้อผิดพลาด: " + (err?.message || err);
 }

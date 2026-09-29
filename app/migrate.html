@@ -1,50 +1,49 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
-<title>ย้ายรหัสหน้าจอ → id แยกต่างหาก — Screen Tracking</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ย้ายสคีมา — Projexa</title>
 <link rel="stylesheet" href="css/style.css">
-<script type="module" src="js/common.js"></script>
 </head>
 <body>
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-group">
-      <img src="assets/logo-full-new.png" alt="Projexa" class="sidebar-logo">
-      <a class="sidebar-item" href="scr-009.html">ทะเบียนหน้าจอ</a>
+  <aside id="sidebar"></aside>
+  <main class="main">
+    <div class="page-header">
+      <h1 class="page-title">ย้ายเอกสาร screens ไปใช้ id แยกจาก code</h1>
+      <p class="page-sub">
+        เครื่องมือรันครั้งเดียว (one-time) — เดิม document id ของ <code>screens</code> คือรหัสหน้าจอ
+        (<code>code</code>) ตรงๆ ตอนนี้เปลี่ยนให้ document id เป็น Firestore auto-generated id
+        (ฟิลด์ <code>screens_id</code>) แทน ส่วน <code>code</code> เป็นฟิลด์ label แยกที่แก้ไขได้อิสระ
+      </p>
     </div>
-    <div id="current-user-bar" class="sidebar-user-group"></div>
-  </nav>
-  <main class="content">
-    <div class="page-header"><h1>ย้ายเอกสาร screens ไปใช้ id แยกจาก code</h1></div>
-    <p class="page-sub">
-      เครื่องมือใช้ครั้งเดียว (one-time) — เดิม document id ของ <code>screens</code> คือรหัสหน้าจอ
-      (<code>code</code>) ตรงๆ ตอนนี้เปลี่ยนให้ document id เป็น Firestore auto-generated id
-      (ฟิลด์ <code>screens_id</code>) แทน ส่วน <code>code</code> เป็นฟิลด์ label แยกที่แก้ไขได้อิสระ —
-      กดปุ่มด้านล่างเพื่อย้ายเอกสารเก่าที่ยังเป็นสคีมาเดิมทั้งหมด
-    </p>
 
-    <div class="card" style="border-color: var(--color-danger, #c0392b);">
-      <h2>คำเตือนก่อนกด</h2>
+    <div class="card info-banner warning">
+      <div class="card-title">คำเตือนก่อนกด</div>
       <ul>
-        <li>เป็นการแก้ไขข้อมูลจริงบน Firestore project ที่ตั้งค่าไว้ใน <code>js/firebase-config.js</code> โดยตรง</li>
-        <li>เอกสารเดิม (doc id = code) จะถูกคัดลอกไปเป็นเอกสารใหม่แล้ว<strong>ลบเอกสาร/ประวัติเดิมทิ้ง</strong> — ควร export ข้อมูลสำรองจาก Firebase Console ไว้ก่อนถ้ากังวล</li>
-        <li>กดซ้ำได้อย่างปลอดภัย — เอกสารที่ย้ายแล้ว (มีฟิลด์ <code>screens_id</code> ตรงกับ doc id อยู่แล้ว) จะถูกข้าม ไม่ย้ายซ้ำ</li>
-        <li>รันครั้งนี้ครั้งเดียวหลังอัปเดตโค้ดแอป ไม่ต้องรันซ้ำในการใช้งานปกติ</li>
+        <li>เป็นการแก้ไขข้อมูลจริงบน Firestore project ที่ตั้งค่าไว้</li>
+        <li>เอกสารเดิมจะถูกทำเครื่องหมาย soft-delete (<code>is_deleted: true</code>)</li>
+        <li>ใช้ "ตรวจสอบก่อน" เพื่อดูการเปลี่ยนแปลงโดยไม่เขียนข้อมูลจริง</li>
+        <li>รันครั้งนี้ครั้งเดียว หลังอัปเดตโค้ดแอป</li>
       </ul>
     </div>
 
     <div class="card">
-      <div class="btn-row">
-        <button type="button" id="ปุ่มเริ่ม" class="btn btn-primary">เริ่มย้ายข้อมูล</button>
+      <div class="form-actions">
+        <button type="button" id="btn-dryrun" class="btn btn-secondary">ตรวจสอบก่อน (Dry Run)</button>
+        <button type="button" id="btn-migrate" class="btn btn-primary">ย้ายข้อมูล</button>
       </div>
-      <div id="สถานะ" style="margin-top:16px; white-space:pre-line;"></div>
+      <div id="log-area" style="margin-top: 16px; white-space: pre-line; font-family: monospace; font-size: 0.875rem; max-height: 400px; overflow-y: auto; padding: 8px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;"></div>
     </div>
 
-    <a class="btn btn-secondary" href="scr-009.html">← กลับไปทะเบียนหน้าจอ</a>
+    <div class="stack">
+      <a class="btn btn-secondary" href="scr-009.html">← กลับไปทะเบียนหน้าจอ</a>
+    </div>
   </main>
 </div>
 
+<div id="toast-root"></div>
 <script type="module" src="js/migrate.js"></script>
 </body>
 </html>

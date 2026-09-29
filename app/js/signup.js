@@ -1,61 +1,38 @@
-// ─────────────────────────────────────────────────────────────
-// js/signup.js — หน้าสมัครสมาชิก (signup.html)
-// สร้างบัญชี Firebase Auth + เอกสาร users ผูกกันด้วย email ทันที (js/auth.js)
-// ─────────────────────────────────────────────────────────────
-
-import { signup, mapAuthError } from "./auth.js";
+// js/signup.js — สมัครสมาชิก: สร้าง Auth account + users/{uid}
+import { signUp, authErrorMessage } from "./auth.js";
+import { ROLES } from "./acl.js";
 
 const form = document.getElementById("signup-form");
-const nameField = document.getElementById("name-field");
-const nameInput = document.getElementById("name-input");
-const emailField = document.getElementById("email-field");
-const emailInput = document.getElementById("email-input");
-const passwordField = document.getElementById("password-field");
-const passwordInput = document.getElementById("password-input");
-const confirmField = document.getElementById("confirm-password-field");
-const confirmInput = document.getElementById("confirm-password-input");
-const roleField = document.getElementById("role-field");
-const roleSelect = document.getElementById("role-select");
-const submitBtn = document.getElementById("signup-submit-btn");
+const roleSel = document.getElementById("role");
+const roleDesc = document.getElementById("role-desc");
+const errBox = document.getElementById("form-error");
+const btn = document.getElementById("btn-signup");
 
-function setFieldError(fieldEl, hasError) {
-  fieldEl.classList.toggle("has-error", hasError);
-}
+roleSel.innerHTML = '<option value="">— เลือกบทบาท —</option>' +
+  Object.values(ROLES).map((r) => `<option value="${r.code}">${r.label} — ${r.desc}</option>`).join("");
+roleSel.addEventListener("change", () => { roleDesc.textContent = ROLES[roleSel.value]?.desc || ""; });
 
-function showFormError(message) {
-  var existing = document.getElementById("signup-form-error");
-  if (existing) existing.remove();
-  var p = document.createElement("p");
-  p.id = "signup-form-error";
-  p.className = "field-error";
-  p.style.display = "block";
-  p.style.marginTop = "8px";
-  p.textContent = message;
-  form.appendChild(p);
-}
-
-form.addEventListener("submit", async function (e) {
+form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const name = nameInput.value.trim();
-  const email = emailInput.value.trim();
-  const password = passwordInput.value;
-  const confirm = confirmInput.value;
-  const role = roleSelect.value;
+  errBox.hidden = true;
+  const name = form.name.value.trim();
+  const email = form.email.value.trim();
+  const password = form.password.value;
+  const role = roleSel.value;
+  let msg = "";
+  if (!name || !email || !password || !role) msg = "กรุณากรอกข้อมูลให้ครบทุกช่องและเลือกบทบาท";
+  else if (password.length < 6) msg = "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร";
+  if (msg) { errBox.textContent = msg; errBox.hidden = false; return; }
 
-  setFieldError(nameField, !name);
-  setFieldError(emailField, !email);
-  setFieldError(passwordField, password.length < 6);
-  setFieldError(confirmField, password !== confirm);
-  setFieldError(roleField, !role);
-  if (!name || !email || password.length < 6 || password !== confirm || !role) return;
-
-  submitBtn.disabled = true;
+  btn.disabled = true;
+  btn.textContent = "กำลังสมัครสมาชิก...";
   try {
-    await signup(name, email, password, role);
-    window.location.href = "scr-009.html";
+    await signUp({ name, email, password, role });
+    location.href = "scr-009.html";
   } catch (err) {
-    showFormError(mapAuthError(err));
-  } finally {
-    submitBtn.disabled = false;
+    errBox.textContent = authErrorMessage(err);
+    errBox.hidden = false;
+    btn.disabled = false;
+    btn.textContent = "สมัครสมาชิก";
   }
 });

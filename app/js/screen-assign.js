@@ -1,501 +1,280 @@
-// ─────────────────────────────────────────────────────────────
-// js/screen-assign.js — SCR-013 มอบหมายผู้รับผิดชอบ (batch)
-// เขียนเข้า field "assignees[]" แบบ embedded ในเอกสาร screens/{id} โดยตรง
-// ─────────────────────────────────────────────────────────────
-
+// js/screen-assign.js — SCR-013 มอบหมายผู้รับผิดชอบ (batch + AI แนะนำ)
 import { db } from "./firebase-config.js";
 import {
-  collection,
-  getDocs,
-  doc,
-  getDoc,
-  updateDoc,
-  addDoc
+  collection, doc, getDoc, getDocs, writeBatch, query, orderBy, limit
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { canAssign, filterScreensForRole, denyAccessAndRedirect } from "./acl.js";
+import { requireAuth, renderShell, showToast, openModal, esc, nowIso, formatDateTime } from "./common.js";
+import { PAGE, canAssign, canAssignFor, filterScreensForRole, denyAccessAndRedirect } from "./acl.js";
+import { loadAiConfig, callOpenRouter, logAi, aiProposalHtml } from "./ai.js";
 
-const params = new URLSearchParams(window.location.search);
-const idsParam = params.get("ids");
-const preselected = idsParam ? idsParam.split(",").map(function (s) { return s.trim(); }) : [];
+const me = await requireAuth();
+renderShell(PAGE.SCR013);
+if (!canAssign(me.role)) { denyAccessAndRedirect(); throw new Error("no access"); }
 
-function avatarInitial(name) {
-  return (name || "").trim().slice(0, 2) || "?";
+const $ = (id) => document.getElementById(id);
+const WORK_ROLES = ["SA", "BA", "Dev", "Tester"];
+
+let allScreens = [];          // ทุกหน้าจอที่ไม่ถูกลบ (ใช้คำนวณภาระงาน)
+let users = [];               // [{user_id,name,role,email}]
+const selected = new Map();   // id -> { loadedUpdatedAt, data, assignees(working), dirty, aiSuggestion }
+let proposal = null;          // { screenId, entry, summary }
+let saving = false;
+
+const workload = (uid) => allScreens.filter((s) => (s.assignees || []).some((a) => a.user_id === uid)).length;
+const allowed = (s) => canAssignFor(me.role, s, me.user_id);
+
+function pickableScreens() {
+  return filterScreensForRole(allScreens, me.role, me.user_id).filter(allowed);
 }
 
-function renderAssigneesCell(assignees) {
-  if (!assignees || !assignees.length) {
-    return '<span class="avatar-empty">— ยังไม่มอบหมาย —</span>';
-  }
-  return assignees.map(function (a) {
-    const reasonAttr = a.ai_reason ? ' title="AI แนะนำ: ' + esc(a.ai_reason) + '"' : "";
-    return '<div class="avatar-row"><span class="avatar">' + esc(avatarInitial(a.user_name)) +
-      '</span><span class="assignee-name"' + reasonAttr + '>' + esc(a.user_name) + " (" + esc(a.role) + ")" +
-      (a.ai_reason ? " ⓘ" : "") + "</span></div>";
-  }).join("");
+function addSelected(s) {
+  if (selected.has(s.screens_id)) return;
+  selected.set(s.screens_id, {
+    loadedUpdatedAt: s.updated_at, data: s,
+    assignees: (s.assignees || []).map((a) => ({ ...a })), dirty: false, aiSuggestion: null
+  });
 }
 
-let openRouterConfig = null;
-
-async function loadOpenRouterConfig() {
-  try {
-    const mod = await import("./openrouter-config.js");
-    if (mod.OPENROUTER_CONFIG && mod.OPENROUTER_CONFIG.apiKey && mod.OPENROUTER_CONFIG.apiKey !== "YOUR_OPENROUTER_API_KEY") {
-      openRouterConfig = mod.OPENROUTER_CONFIG;
-    }
-  } catch (e) {
-    openRouterConfig = null;
-  }
+// ── Render ──
+function chipsHtml(id, list) {
+  if (!list.length) return '<span class="muted">ยังไม่มีผู้รับผิดชอบ</span>';
+  return list.map((a, i) => `<span class="assignee-chip">${esc(a.user_name)} <span class="assignee-role">${esc(a.role)}</span>${a.origin_label === "AIGenerated" ? ' <span class="ai-badge">AI</span>' : ""}<button type="button" class="chip-remove" data-act="unassign" data-id="${esc(id)}" data-idx="${i}" title="ยกเลิกการมอบหมาย" aria-label="ยกเลิกการมอบหมาย">✕</button></span>`).join(" ");
 }
 
-const VALID_ASSIGN_ROLES = ["SA", "BA", "Dev", "Tester"];
-
-async function fetchScreenHistory(screenId, cache) {
-  if (cache[screenId]) return cache[screenId];
-  const snapshot = await getDocs(collection(db, "screens", screenId, "statusHistory"));
-  const items = [];
-  snapshot.forEach(function (d) { items.push(d.data()); });
-  cache[screenId] = items;
-  return items;
+function renderPicker() {
+  const q = $("picker-search").value.trim().toLowerCase();
+  const rows = pickableScreens().filter((s) => !selected.has(s.screens_id) &&
+    (!q || `${s.code} ${s.name}`.toLowerCase().includes(q)))
+    .sort((a, b) => String(a.code).localeCompare(String(b.code)));
+  $("picker-body").innerHTML = rows.length ? rows.map((s) => `<tr>
+    <td class="col-check"><input type="checkbox" class="pick" value="${esc(s.screens_id)}"></td>
+    <td><span class="code-label">${esc(s.code)}</span></td><td>${esc(s.name)}</td>
+    <td>${(s.assignees || []).map((a) => `<span class="assignee-chip">${esc(a.user_name)} <span class="assignee-role">${esc(a.role)}</span></span>`).join(" ") || '<span class="muted">-</span>'}</td>
+  </tr>`).join("") : `<tr><td colspan="4"><div class="empty-state">ไม่มีหน้าจอให้เลือก</div></td></tr>`;
 }
 
-async function buildCandidateSummaries(screens, users) {
-  const cache = {};
-  const candidates = [];
-  for (const u of users) {
-    if (u.is_active === false) continue;
-    const uid = u.id;
-    const assigned = screens.filter(function (s) {
-      return (s.assignees || []).some(function (a) { return a.user_id === uid; });
-    });
-    const openCount = assigned.filter(function (s) { return s.current_status !== "Design"; }).length;
-    const assignmentLines = assigned.slice(0, 8).map(function (s) {
-      const roleEntry = (s.assignees || []).find(function (a) { return a.user_id === uid; });
-      return (s.code || s.id) + " (" + ((s.type && s.type.label) || "-") + ", " + (s.current_status || "NotStarted") + ", บทบาท " + ((roleEntry && roleEntry.role) || "-") + ")";
-    });
-    const noteLines = [];
-    for (const s of assigned) {
-      const hist = await fetchScreenHistory(s.id, cache);
-      hist.filter(function (h) { return h.changed_by === uid; }).forEach(function (h) {
-        noteLines.push((s.code || s.id) + ": " + (h.old_status || "?") + "→" + (h.new_status || "?") + (h.note ? " (" + h.note + ")" : ""));
+function renderSelected() {
+  $("sel-count").textContent = selected.size;
+  $("selected-list").innerHTML = selected.size ? [...selected.entries()].map(([id, v]) => `
+    <div class="row" style="justify-content:space-between;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--border,#eee)">
+      <div><span class="code-label">${esc(v.data.code)}</span> ${esc(v.data.name)}
+        ${v.dirty ? '<span class="tag tag-warning">ยังไม่บันทึก</span>' : ""}
+        <div style="margin-top:6px">${chipsHtml(id, v.assignees)}</div></div>
+      <button type="button" class="btn btn-ghost btn-sm" data-act="remove-screen" data-id="${esc(id)}">นำออกจากรายการ</button>
+    </div>`).join("") : `<div class="empty-state">ยังไม่ได้เลือกหน้าจอ — เลือกจากตารางด้านบน</div>`;
+  const cur = $("ai-screen").value;
+  $("ai-screen").innerHTML = `<option value="">— เลือกหน้าจอ —</option>` + [...selected.entries()].map(([id, v]) =>
+    `<option value="${esc(id)}">${esc(v.data.code)} — ${esc(v.data.name)}</option>`).join("");
+  if (selected.has(cur)) $("ai-screen").value = cur;
+  $("btn-save").disabled = ![...selected.values()].some((v) => v.dirty);
+}
+
+function renderUsers() {
+  $("user-list").innerHTML = users.length ? users.map((u) => `<label class="checkbox-row">
+    <input type="checkbox" class="pick-user" value="${esc(u.user_id)}">
+    <span>${esc(u.name)} <span class="muted">(${esc(u.role || "-")}${u.user_id === me.user_id ? " · ตัวคุณเอง" : ""}) · ภาระงาน ${workload(u.user_id)} หน้าจอ</span></span>
+  </label>`).join("") : '<div class="muted">ไม่พบผู้ใช้ที่ใช้งานอยู่</div>';
+}
+
+// ── Actions ──
+function applyBatch() {
+  const uids = [...document.querySelectorAll(".pick-user:checked")].map((c) => c.value);
+  const role = $("work-role").value;
+  if (!selected.size) return showToast("กรุณาเลือกหน้าจออย่างน้อย 1 หน้าจอ", "warning");
+  if (!uids.length) return showToast("กรุณาเลือกผู้รับผิดชอบอย่างน้อย 1 คน", "warning");
+  let added = 0, skipped = 0;
+  for (const v of selected.values()) {
+    for (const uid of uids) {
+      const u = users.find((x) => x.user_id === uid);
+      if (!u) continue;
+      if (v.assignees.some((a) => a.user_id === uid && a.role === role)) { skipped++; continue; }
+      v.assignees.push({
+        user_id: u.user_id, user_name: u.name, role, assigned_by: me.user_id, assigned_at: nowIso(),
+        origin_label: "ManualEntry", ai_confidence: null, ai_reason: null
       });
+      v.dirty = true; added++;
     }
-    candidates.push({
-      id: uid,
-      name: u.name,
-      openCount: openCount,
-      assignedCount: assigned.length,
-      assignmentLines: assignmentLines,
-      noteLines: noteLines.slice(0, 8)
-    });
   }
-  return candidates;
+  renderSelected();
+  showToast(`เพิ่ม ${added} รายการ${skipped ? ` (ข้าม ${skipped} รายการที่ซ้ำ)` : ""} — กดบันทึกเพื่อยืนยัน`, added ? "success" : "info");
 }
 
-function buildAssigneePrompt(targetScreen, candidates) {
-  const systemPrompt =
-    "คุณเป็นผู้ช่วยแนะนำผู้รับผิดชอบหน้าจอซอฟต์แวร์ ตอบกลับเป็น JSON เท่านั้น รูปแบบ " +
-    '{"user_id": "...", "role": "SA|BA|Dev|Tester", "confidence": 0.0, "reason": "..."} โดย user_id ต้องเป็นค่าใดค่าหนึ่งจากรายชื่อที่ให้มาเท่านั้น ' +
-    "role ต้องเป็นหนึ่งใน SA, BA, Dev, Tester เท่านั้น reason ให้เขียนสั้นๆ ไม่เกิน 2 ประโยคเป็นภาษาไทย อธิบายว่าทำไมเหมาะกับหน้าจอนี้ โดยอ้างอิงประสบการณ์/ภาระงานที่ให้มา ห้ามมีข้อความอื่นนอกเหนือจาก JSON";
-
-  const lines = [];
-  lines.push("หน้าจอที่ต้องมอบหมาย:");
-  lines.push("ชื่อ: " + targetScreen.name);
-  lines.push("คำอธิบาย: " + (targetScreen.description || "-"));
-  lines.push("ประเภท: " + ((targetScreen.type && targetScreen.type.label) || "-"));
-  lines.push("");
-  lines.push("รายชื่อผู้ใช้ที่เลือกได้ (เลือกได้เฉพาะ user_id เหล่านี้เท่านั้น):");
-  candidates.forEach(function (c) {
-    lines.push("- user_id: " + c.id + ", ชื่อ: " + c.name + ", งานที่ยังไม่เสร็จตอนนี้: " + c.openCount + " หน้าจอ, เคยได้รับมอบหมายทั้งหมด: " + c.assignedCount + " หน้าจอ");
-    if (c.assignmentLines.length) lines.push("  ประวัติหน้าจอที่เคยทำ: " + c.assignmentLines.join("; "));
-    if (c.noteLines.length) lines.push("  บันทึกความก้าวหน้าที่เคยเขียน: " + c.noteLines.join("; "));
-  });
-
-  return { systemPrompt: systemPrompt, userPrompt: lines.join("\n") };
-}
-
-async function callOpenRouterChat(systemPrompt, userPrompt) {
-  const controller = new AbortController();
-  const timer = setTimeout(function () { controller.abort(); }, 15000);
-  let res;
+async function save() {
+  if (saving) return;
+  saving = true; $("btn-save").disabled = true;
   try {
-    res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer " + openRouterConfig.apiKey,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: openRouterConfig.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
-      }),
-      signal: controller.signal
-    });
+    const dirtyIds = [...selected.entries()].filter(([, v]) => v.dirty).map(([id]) => id);
+    const conflicts = [];
+    const batch = writeBatch(db);
+    const now = nowIso();
+    const okIds = [];
+    for (const id of dirtyIds) {
+      const v = selected.get(id);
+      const cur = await getDoc(doc(db, "screens", id));
+      if (!cur.exists() || cur.data().is_deleted || cur.data().updated_at !== v.loadedUpdatedAt) {
+        conflicts.push(id); continue;
+      }
+      const patch = { assignees: v.assignees, updated_at: now };
+      if (v.aiSuggestion) patch.aiSuggestion = v.aiSuggestion;
+      batch.update(doc(db, "screens", id), patch);
+      okIds.push(id);
+    }
+    if (okIds.length) await batch.commit();
+    for (const id of okIds) {
+      const v = selected.get(id);
+      v.loadedUpdatedAt = now; v.dirty = false; v.aiSuggestion = null;
+      v.data = { ...v.data, assignees: v.assignees, updated_at: now };
+      const i = allScreens.findIndex((s) => s.screens_id === id);
+      if (i >= 0) allScreens[i] = v.data;
+    }
+    if (okIds.length) showToast(`บันทึกแล้ว ${okIds.length} หน้าจอ`, "success");
+    if (conflicts.length) {
+      await openModal({
+        title: "มีข้อมูลถูกแก้ไขโดยผู้อื่น",
+        bodyHtml: `<p>หน้าจอต่อไปนี้ถูกแก้ไข/ลบโดยผู้อื่นระหว่างที่คุณกำลังทำงาน ระบบไม่เขียนทับ และจะโหลดข้อมูลล่าสุดใหม่ (การเปลี่ยนแปลงของคุณในหน้าจอเหล่านี้ถูกยกเลิก):</p><ul>${conflicts.map((id) => `<li>${esc(selected.get(id).data.code)}</li>`).join("")}</ul>`,
+        confirmText: "โหลดข้อมูลล่าสุด"
+      });
+      for (const id of conflicts) {
+        const cur = await getDoc(doc(db, "screens", id));
+        if (!cur.exists() || cur.data().is_deleted) { selected.delete(id); continue; }
+        const data = { ...cur.data(), screens_id: cur.id };
+        selected.delete(id); addSelected(data);
+        const i = allScreens.findIndex((s) => s.screens_id === id);
+        if (i >= 0) allScreens[i] = data;
+      }
+    }
+    renderSelected(); renderPicker(); renderUsers();
+  } catch (err) {
+    console.error(err);
+    showToast("บันทึกไม่สำเร็จ: " + (err.message || err), "danger");
   } finally {
-    clearTimeout(timer);
-  }
-
-  if (!res.ok) throw new Error("OpenRouter request failed: " + res.status);
-  const data = await res.json();
-  const content = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-  if (!content) throw new Error("Empty AI response");
-  return content;
-}
-
-function parseJSONLoose(content) {
-  try {
-    return JSON.parse(content.trim());
-  } catch (e) {
-    // non-greedy: จับ JSON object แรกที่ปิดสมบูรณ์เท่านั้น กัน AI พ่นข้อความ
-    // ต่อท้าย JSON แล้ว regex แบบ greedy เผลอกิน { } ที่ไม่เกี่ยวข้องเข้ามาด้วย
-    const match = content.match(/\{[\s\S]*?\}/);
-    if (!match) throw new Error("AI response is not valid JSON");
-    return JSON.parse(match[0]);
+    saving = false;
+    $("btn-save").disabled = ![...selected.values()].some((v) => v.dirty);
   }
 }
 
-async function fetchAssigneeSuggestion(prompt, candidates) {
-  const raw = await callOpenRouterChat(prompt.systemPrompt, prompt.userPrompt);
+// ── AI ──
+async function onAi() {
+  const id = $("ai-screen").value;
+  if (!id) return showToast("กรุณาเลือกหน้าจอที่จะให้ AI แนะนำ", "warning");
+  if (!(await loadAiConfig())) return showToast("ยังไม่ได้ตั้งค่า OpenRouter (ฟีเจอร์ AI ใช้ได้เฉพาะตอนรันบนเครื่องที่มี openrouter-config.js)", "warning");
+  const v = selected.get(id);
+  $("btn-ai").disabled = true; $("ai-spinner").classList.remove("hidden");
+  let messages = null;
   try {
-    const parsed = parseJSONLoose(raw);
-
-    const candidate = candidates.find(function (c) { return c.id === parsed.user_id; });
-    if (!candidate) throw new Error("AI suggested an unknown user_id");
-    if (VALID_ASSIGN_ROLES.indexOf(parsed.role) === -1) throw new Error("AI suggested an unknown role");
-    let confidence = parseFloat(parsed.confidence);
-    if (isNaN(confidence)) confidence = 0;
-    confidence = Math.max(0, Math.min(1, confidence));
-
-    return {
-      userId: candidate.id,
-      userName: candidate.name,
-      role: parsed.role,
-      confidence: confidence,
-      reason: String(parsed.reason || "").trim(),
-      raw: raw,
-      parsed: parsed
+    let history = [];
+    try {
+      const hs = await getDocs(query(collection(db, "screens", id, "statusHistory"), orderBy("changed_at", "desc"), limit(5)));
+      history = hs.docs.map((d) => { const h = d.data(); return { changed_by: h.changed_by, changed_by_name: h.changed_by_name, changed_at: h.changed_at, old_status: h.old_status, new_status: h.new_status }; });
+    } catch (e) { console.warn("อ่านประวัติสถานะไม่สำเร็จ", e); }
+    const payload = {
+      screen: { code: v.data.code, name: v.data.name, description: v.data.description || "", type: v.data.type?.label || null, current_status: v.data.current_status, current_assignees: v.assignees.map((a) => ({ user_id: a.user_id, name: a.user_name, role: a.role })) },
+      candidates: users.map((u) => ({ user_id: u.user_id, name: u.name, user_role: u.role, current_workload: workload(u.user_id) })),
+      recent_status_history: history,
+      work_roles: WORK_ROLES
     };
-  } catch (e) {
-    e.raw = raw;
-    throw e;
-  }
-}
-
-async function logAICall(screenId, entry) {
-  if (!screenId) return;
-  try {
-    await addDoc(collection(db, "screens", screenId, "aiLog"), entry);
-  } catch (e) { /* ไม่ critical — ไม่บล็อก UX ถ้าบันทึก log ไม่สำเร็จ */ }
-}
-
-(async function () {
-  const body = document.getElementById("assign-screen-body");
-  const selectedCountEl = document.getElementById("assign-selected-count");
-  const userSelect = document.getElementById("assign-user-select");
-
-  await window.AUTH_READY;
-  const role = window.CURRENT_USER.role;
-  const userId = window.CURRENT_USER.id;
-
-  if (!canAssign(role)) {
-    denyAccessAndRedirect();
-    return;
-  }
-
-  let screens = [];
-  try {
-    const snapshot = await getDocs(collection(db, "screens"));
-    snapshot.forEach(function (docSnap) {
-      const data = docSnap.data();
-      if (data.is_deleted) return;
-      screens.push(Object.assign({}, data, { id: docSnap.id }));
+    messages = [
+      { role: "system", content: "You recommend one assignee for a software screen. Consider workload (lower is better), the person's role and who recently worked on the screen. Reply with JSON only: {\"user_id\": string (from candidates), \"role\": one of SA|BA|Dev|Tester, \"confidence\": number 0-1, \"reason\": string (Thai, short)}." },
+      { role: "user", content: JSON.stringify(payload) }
+    ];
+    const { raw, parsed } = await callOpenRouter(messages);
+    await logAi(id, { source: "assignee", input: messages, output: { raw, parsed } }, me);
+    const u = users.find((x) => x.user_id === parsed.user_id);
+    if (!u) throw new Error("AI แนะนำผู้ใช้ที่ไม่อยู่ในรายการ: " + parsed.user_id);
+    if (!WORK_ROLES.includes(parsed.role)) throw new Error("AI ตอบบทบาทไม่ถูกต้อง: " + parsed.role);
+    const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+    proposal = {
+      screenId: id, user: u, role: parsed.role, confidence, reason: parsed.reason || "",
+    };
+    $("ai-area").innerHTML = aiProposalHtml({
+      title: `แนะนำผู้รับผิดชอบสำหรับ ${v.data.code}`,
+      bodyHtml: `<p><strong>${esc(u.name)}</strong> ในบทบาท <strong>${esc(parsed.role)}</strong> · ภาระงานปัจจุบัน ${workload(u.user_id)} หน้าจอ</p>`,
+      confidence, reason: proposal.reason
     });
   } catch (err) {
-    body.innerHTML = '<tr><td colspan="4" class="loading-note">อ่านข้อมูลจาก Firestore ไม่สำเร็จ: ' + esc(err.message) + "</td></tr>";
-    return;
+    console.error(err);
+    await logAi(id, { source: "assignee", input: messages || "(สร้าง prompt ไม่สำเร็จ)", error: err.message || err }, me);
+    showToast("AI แนะนำไม่สำเร็จ: " + (err.message || err), "danger");
+  } finally {
+    $("btn-ai").disabled = false; $("ai-spinner").classList.add("hidden");
   }
+}
 
-  // ขอบเขตการมองเห็น/มอบหมายตาม role (DEV เห็น/เลือกได้เฉพาะหน้าจอที่ตนเอง
-  // ถูกมอบหมายอยู่แล้ว — ACL.md หมายเหตุ 2)
-  screens = filterScreensForRole(screens, role, userId);
-
-  // เรียงหน้าจอที่บันทึกสร้างล่าสุดไว้เป็นรายการแรกเสมอ (หน้าจอเก่าที่ยังไม่มี
-  // created_at จะถูกจัดไว้ท้ายรายการ) — เหมือนกับ SCR-009
-  screens.sort(function (a, b) {
-    const ad = a.created_at || "";
-    const bd = b.created_at || "";
-    if (ad === bd) return 0;
-    return ad < bd ? 1 : -1;
-  });
-
-  const screenById = {};
-  screens.forEach(function (s) { screenById[s.id] = s; });
-
-  body.innerHTML = screens.map(function (s) {
-    const checked = preselected.indexOf(s.id) !== -1 ? " checked" : "";
-    return '<tr data-id="' + esc(s.id) + '">' +
-      '<td><input type="checkbox" class="assign-row-check" value="' + esc(s.id) + '"' + checked + "></td>" +
-      '<td style="font-family: var(--font-mono);">' + esc(s.code || s.id) + "</td>" +
-      "<td>" + esc(s.name) + "</td>" +
-      '<td class="assignee-cell">' + renderAssigneesCell(s.assignees) + "</td>" +
-      "</tr>";
-  }).join("");
-
-  function updateSelection() {
-    selectedCountEl.textContent = document.querySelectorAll(".assign-row-check:checked").length;
-  }
-  document.querySelectorAll(".assign-row-check").forEach(function (box) {
-    box.addEventListener("change", updateSelection);
-  });
-  updateSelection();
-
-  let usersList = [];
-  try {
-    const userSnapshot = await getDocs(collection(db, "users"));
-    const options = [];
-    userSnapshot.forEach(function (docSnap) {
-      const u = docSnap.data();
-      usersList.push(Object.assign({}, u, { id: docSnap.id }));
-      if (u.is_active === false) return;
-      options.push('<option data-initial="' + esc(avatarInitial(u.name)) + '" value="' + esc(docSnap.id) + '">' + esc(u.name) + "</option>");
-    });
-    userSelect.innerHTML = options.join("") || '<option value="">ไม่มีผู้ใช้ในระบบ</option>';
-  } catch (err) {
-    userSelect.innerHTML = '<option value="">โหลดรายชื่อผู้ใช้ไม่สำเร็จ</option>';
-  }
-
-  await loadOpenRouterConfig();
-
-  const roleSelectEl = document.getElementById("assign-role-select");
-  const aiSuggestBtn = document.getElementById("ai-suggest-assignee-btn");
-  const aiWaiting = document.getElementById("ai-assignee-waiting");
-  const aiBlock = document.getElementById("ai-assignee-block");
-  const aiTimeoutMsg = document.getElementById("ai-assignee-timeout-msg");
-  let appliedAISuggestion = null;
-  let ignoreNextUserOrRoleChange = false;
-
-  function clearAppliedSuggestion() {
-    appliedAISuggestion = null;
-    aiBlock.hidden = true;
-    aiTimeoutMsg.hidden = true;
-  }
-
-  document.querySelectorAll(".assign-row-check").forEach(function (box) {
-    box.addEventListener("change", clearAppliedSuggestion);
-  });
-  userSelect.addEventListener("change", function () {
-    if (ignoreNextUserOrRoleChange) return;
-    appliedAISuggestion = null;
-  });
-  roleSelectEl.addEventListener("change", function () {
-    if (ignoreNextUserOrRoleChange) return;
-    appliedAISuggestion = null;
-  });
-
-  aiSuggestBtn.addEventListener("click", async function () {
-    if (!openRouterConfig) {
-      window.showToast("ฟีเจอร์นี้ใช้ได้เฉพาะตอนรันบนเครื่อง (local dev) เท่านั้น", "danger");
-      return;
-    }
-    const checkedBoxes = Array.from(document.querySelectorAll(".assign-row-check:checked"));
-    if (checkedBoxes.length !== 1) {
-      window.showToast("กรุณาเลือกหน้าจอทางซ้ายให้พอดี 1 หน้าจอก่อนให้ AI ช่วยแนะนำ", "danger");
-      return;
-    }
-    const targetScreen = screenById[checkedBoxes[0].value];
-
-    aiBlock.hidden = true;
-    aiTimeoutMsg.hidden = true;
-    aiWaiting.hidden = false;
-
-    let candidates;
-    try {
-      candidates = await buildCandidateSummaries(screens, usersList);
-    } catch (e) {
-      aiWaiting.hidden = true;
-      aiTimeoutMsg.hidden = false;
-      return;
-    }
-
-    const prompt = buildAssigneePrompt(targetScreen, candidates);
-    const logEntry = {
-      source: "assignee",
-      input: prompt,
-      output: null,
-      error: null,
-      created_by: window.CURRENT_USER.id,
-      created_by_name: window.CURRENT_USER.name,
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      const suggestion = await fetchAssigneeSuggestion(prompt, candidates);
-      logEntry.output = { raw: suggestion.raw, parsed: suggestion.parsed };
-
-      aiWaiting.hidden = true;
-      aiBlock.hidden = false;
-      document.getElementById("ai-assignee-suggested-name").textContent = suggestion.userName;
-      document.getElementById("ai-assignee-suggested-role").textContent = suggestion.role;
-      document.getElementById("ai-assignee-suggested-confidence").textContent = Math.round(suggestion.confidence * 100) + "%";
-      document.getElementById("ai-assignee-suggested-reason").textContent = suggestion.reason || "-";
-      appliedAISuggestion = { screenId: targetScreen.id, userId: suggestion.userId, role: suggestion.role, confidence: suggestion.confidence, reason: suggestion.reason, applied: false };
-
-      const summary = "AI แนะนำผู้รับผิดชอบ: " + suggestion.userName + " เป็น " + suggestion.role +
-        (suggestion.reason ? " — " + suggestion.reason : "");
-      try {
-        await updateDoc(doc(db, "screens", targetScreen.id), {
-          aiSuggestion: {
-            summary: summary,
-            source: "assignee",
-            confidence: suggestion.confidence,
-            createdAt: logEntry.createdAt
-          }
-        });
-      } catch (e) { /* ไม่ critical — ไม่บล็อก UX การแนะนำถ้าบันทึก aiSuggestion ไม่สำเร็จ */ }
-    } catch (e) {
-      logEntry.error = String((e && e.message) || e);
-      if (e && e.raw) logEntry.output = { raw: e.raw, parsed: null };
-      aiWaiting.hidden = true;
-      aiTimeoutMsg.hidden = false;
-    }
-
-    await logAICall(targetScreen.id, logEntry);
-  });
-
-  document.getElementById("ai-assignee-dismiss-btn").addEventListener("click", clearAppliedSuggestion);
-
-  document.getElementById("ai-assignee-apply-btn").addEventListener("click", function () {
-    if (!appliedAISuggestion) return;
-    ignoreNextUserOrRoleChange = true;
-    userSelect.value = appliedAISuggestion.userId;
-    roleSelectEl.value = appliedAISuggestion.role;
-    ignoreNextUserOrRoleChange = false;
-    appliedAISuggestion.applied = true;
-  });
-
-  document.getElementById("assign-form").addEventListener("submit", async function (e) {
-    e.preventDefault();
-    const checkedBoxes = Array.from(document.querySelectorAll(".assign-row-check:checked"));
-    const roleSelect = document.getElementById("assign-role-select");
-    const resultList = document.getElementById("assign-result-list");
-    const resultEmptyNote = document.getElementById("assign-result-empty");
-
-    if (!checkedBoxes.length || !userSelect.value) {
-      window.showToast("กรุณาเลือกอย่างน้อย 1 หน้าจอ และเลือกผู้รับผิดชอบ", "danger");
-      return;
-    }
-    const userId = userSelect.value;
-    const userLabel = userSelect.options[userSelect.selectedIndex].text;
-    const role = roleSelect.value;
-    const now = new Date().toISOString();
-
-    let successCount = 0;
-    const results = [];
-    for (const box of checkedBoxes) {
-      const id = box.value;
-      const codeLabel = (screenById[id] && screenById[id].code) || id;
-      const ref = doc(db, "screens", id);
-      const snap = await getDoc(ref);
-      if (!snap.exists() || snap.data().is_deleted) {
-        results.push({ code: codeLabel, ok: false, note: "หน้าจอนี้ถูกลบไปแล้วก่อนบันทึกเสร็จ — ข้ามรายการนี้" });
-        continue;
-      }
-      const currentAssignees = snap.data().assignees || [];
-      const idx = currentAssignees.findIndex(function (a) { return a.role === role; });
-      const fromAI = appliedAISuggestion && appliedAISuggestion.applied &&
-        appliedAISuggestion.screenId === id && appliedAISuggestion.userId === userId && appliedAISuggestion.role === role;
-      const entry = {
-        user_id: userId,
-        user_name: userLabel,
-        role: role,
-        assigned_by: window.CURRENT_USER.id,
-        assigned_at: now,
-        origin_label: fromAI ? "AIGenerated" : "ManualEntry",
-        ai_confidence: fromAI ? appliedAISuggestion.confidence : null,
-        ai_reason: fromAI ? appliedAISuggestion.reason : null
+function onAiArea(e) {
+  const act = e.target.closest("[data-act]")?.dataset.act;
+  if (!act || !proposal) return;
+  if (act === "ai-confirm") {
+    const v = selected.get(proposal.screenId);
+    if (v.assignees.some((a) => a.user_id === proposal.user.user_id && a.role === proposal.role)) {
+      showToast("ผู้รับผิดชอบคนนี้ในบทบาทนี้มีอยู่แล้ว", "info");
+    } else {
+      v.assignees.push({
+        user_id: proposal.user.user_id, user_name: proposal.user.name, role: proposal.role,
+        assigned_by: me.user_id, assigned_at: nowIso(), origin_label: "AIGenerated",
+        ai_confidence: proposal.confidence, ai_reason: proposal.reason
+      });
+      v.aiSuggestion = {
+        summary: `แนะนำ ${proposal.user.name} (${proposal.role}): ${proposal.reason}`,
+        source: "assignee", confidence: proposal.confidence, createdAt: nowIso()
       };
-      if (idx !== -1) currentAssignees[idx] = entry;
-      else currentAssignees.push(entry);
-      await updateDoc(ref, { assignees: currentAssignees, updated_at: now });
-      successCount++;
-      results.push({ code: codeLabel, ok: true, note: "มอบหมาย " + userLabel + " เป็น " + role + " สำเร็จ" });
-
-      const row = document.querySelector('tr[data-id="' + CSS.escape(id) + '"] .assignee-cell');
-      if (row) row.innerHTML = renderAssigneesCell(currentAssignees);
+      v.dirty = true;
+      renderSelected();
+      showToast("เพิ่มผู้รับผิดชอบตามที่ AI แนะนำแล้ว — กดบันทึกเพื่อยืนยัน", "success");
     }
-
-    resultList.innerHTML = results.map(function (r) {
-      return '<li class="result-item ' + (r.ok ? "is-success" : "is-failed") + '"><span class="dot"></span><span>' +
-        esc(r.code) + " — " + esc(r.note) + "</span></li>";
-    }).join("");
-    resultEmptyNote.hidden = results.length > 0;
-    window.showToast("มอบหมายแล้ว " + successCount + " หน้าจอ (จากทั้งหมด " + checkedBoxes.length + " รายการที่เลือก)");
-    clearAppliedSuggestion();
-  });
-
-  const unassignModalOverlay = document.getElementById("unassign-modal-overlay");
-  const unassignModalMessage = document.getElementById("unassign-modal-message");
-
-  function closeUnassignModal() {
-    unassignModalOverlay.hidden = true;
   }
-  document.getElementById("unassign-cancel-btn").addEventListener("click", closeUnassignModal);
-  unassignModalOverlay.addEventListener("click", function (e) {
-    if (e.target === unassignModalOverlay) closeUnassignModal();
-  });
+  proposal = null; $("ai-area").innerHTML = "";
+}
 
-  document.getElementById("unassign-btn").addEventListener("click", function () {
-    const checkedBoxes = Array.from(document.querySelectorAll(".assign-row-check:checked"));
-    if (!checkedBoxes.length) {
-      window.showToast("กรุณาเลือกอย่างน้อย 1 หน้าจอ", "danger");
-      return;
-    }
-    const role = document.getElementById("assign-role-select").value;
-    unassignModalMessage.textContent = "ต้องการยกเลิกมอบหมายบทบาท " + role + " ออกจาก " + checkedBoxes.length + " หน้าจอที่เลือกใช่หรือไม่?";
-    unassignModalOverlay.hidden = false;
-  });
+// ── Init ──
+async function init() {
+  const [sSnap, uSnap] = await Promise.all([getDocs(collection(db, "screens")), getDocs(collection(db, "users"))]);
+  allScreens = sSnap.docs.map((d) => ({ ...d.data(), screens_id: d.id })).filter((s) => !s.is_deleted);
+  users = uSnap.docs.map((d) => ({ user_id: d.id, ...d.data() })).filter((u) => u.is_active !== false)
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
-  document.getElementById("unassign-confirm-btn").addEventListener("click", async function () {
-    const checkedBoxes = Array.from(document.querySelectorAll(".assign-row-check:checked"));
-    const role = document.getElementById("assign-role-select").value;
-    const resultList = document.getElementById("assign-result-list");
-    const resultEmptyNote = document.getElementById("assign-result-empty");
-    const now = new Date().toISOString();
+  const ids = (new URLSearchParams(location.search).get("ids") || "").split(",").map((x) => x.trim()).filter(Boolean);
+  let skipped = 0;
+  for (const id of ids) {
+    const s = allScreens.find((x) => x.screens_id === id);
+    if (s && filterScreensForRole([s], me.role, me.user_id).length && allowed(s)) addSelected(s); else skipped++;
+  }
+  if (skipped) showToast(`ข้าม ${skipped} หน้าจอที่ไม่พบหรือคุณไม่มีสิทธิ์มอบหมาย`, "warning");
 
-    closeUnassignModal();
+  renderPicker(); renderSelected(); renderUsers();
+  $("loading").classList.add("hidden");
+  $("content").classList.remove("hidden");
+}
 
-    let successCount = 0;
-    const results = [];
-    for (const box of checkedBoxes) {
-      const id = box.value;
-      const codeLabel = (screenById[id] && screenById[id].code) || id;
-      const ref = doc(db, "screens", id);
-      const snap = await getDoc(ref);
-      if (!snap.exists() || snap.data().is_deleted) {
-        results.push({ status: "is-failed", code: codeLabel, note: "หน้าจอนี้ถูกลบไปแล้ว — ข้ามรายการนี้" });
-        continue;
-      }
-      const currentAssignees = snap.data().assignees || [];
-      const remaining = currentAssignees.filter(function (a) { return a.role !== role; });
-      if (remaining.length === currentAssignees.length) {
-        results.push({ status: "is-neutral", code: codeLabel, note: "ไม่มีผู้รับผิดชอบบทบาท " + role + " อยู่ก่อนแล้ว" });
-        continue;
-      }
-      await updateDoc(ref, { assignees: remaining, updated_at: now });
-      successCount++;
-      results.push({ status: "is-success", code: codeLabel, note: "ยกเลิกมอบหมายบทบาท " + role + " สำเร็จ" });
+$("picker-search").addEventListener("input", renderPicker);
+$("btn-add-picked").addEventListener("click", () => {
+  const picked = [...document.querySelectorAll(".pick:checked")].map((c) => c.value);
+  if (!picked.length) return showToast("กรุณาติ๊กเลือกหน้าจอ", "warning");
+  for (const id of picked) { const s = allScreens.find((x) => x.screens_id === id); if (s) addSelected(s); }
+  renderPicker(); renderSelected();
+});
+$("selected-list").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-act]");
+  if (!btn) return;
+  const v = selected.get(btn.dataset.id);
+  if (!v) return;
+  if (btn.dataset.act === "unassign") {
+    if (!allowed(v.data)) return showToast("คุณไม่มีสิทธิ์ยกเลิกการมอบหมายหน้าจอนี้", "warning");
+    v.assignees.splice(Number(btn.dataset.idx), 1);
+    v.dirty = true;
+  } else if (btn.dataset.act === "remove-screen") {
+    if (v.dirty && !confirm("มีการเปลี่ยนแปลงที่ยังไม่บันทึกในหน้าจอนี้ ต้องการนำออกและทิ้งการเปลี่ยนแปลงหรือไม่?")) return;
+    selected.delete(btn.dataset.id);
+    if (proposal?.screenId === btn.dataset.id) { proposal = null; $("ai-area").innerHTML = ""; }
+    renderPicker();
+  }
+  renderSelected();
+});
+$("btn-apply").addEventListener("click", applyBatch);
+$("btn-save").addEventListener("click", save);
+$("btn-ai").addEventListener("click", onAi);
+$("ai-area").addEventListener("click", onAiArea);
 
-      const row = document.querySelector('tr[data-id="' + CSS.escape(id) + '"] .assignee-cell');
-      if (row) row.innerHTML = renderAssigneesCell(remaining);
-    }
-
-    resultList.innerHTML = results.map(function (r) {
-      return '<li class="result-item ' + r.status + '"><span class="dot"></span><span>' +
-        esc(r.code) + " — " + esc(r.note) + "</span></li>";
-    }).join("");
-    resultEmptyNote.hidden = results.length > 0;
-    window.showToast("ยกเลิกมอบหมายสำเร็จ " + successCount + " หน้าจอ (จากทั้งหมด " + checkedBoxes.length + " รายการที่เลือก)");
-  });
-})();
+try { await init(); } catch (err) {
+  console.error(err);
+  $("loading").innerHTML = `<div class="info-banner danger">โหลดข้อมูลไม่สำเร็จ: ${esc(err.message || err)}</div>`;
+}

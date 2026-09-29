@@ -1,102 +1,180 @@
 // ─────────────────────────────────────────────────────────────
 // js/seed.js — ใส่ข้อมูลตัวอย่างจาก js/data.js ขึ้น Firestore ครั้งเดียว
 // รันจาก seed.html เท่านั้น ไม่ได้ใช้ในหน้าจอปกติของระบบ
-//
-// หมายเหตุ (หลังเพิ่มระบบล็อกอิน): ไม่ seed collection "users" ตรงๆ อีกต่อไป
-// เพราะผู้ใช้ต้องสมัครสมาชิกเองผ่าน signup.html (ได้ Firestore auto-generated
-// id ผูกกับ Firebase Auth) — ที่นี่แค่ query "users" จริงจาก Firestore มาจับคู่
-// ชื่อ (user_name/changed_by_name/assigned_by_name ใน data.js) กับ user_id จริง
-// ก่อนเขียน screens/statusHistory — ชื่อไหนยังไม่มีในระบบจะถูกข้าม (ไม่ผูก) และ
-// แจ้งเตือนในกล่องสถานะ
 // ─────────────────────────────────────────────────────────────
 
+import { requireAuth, renderShell, showToast, nowIso } from "./common.js";
+import { PAGE, denyAccessAndRedirect } from "./acl.js";
 import { db } from "./firebase-config.js";
+import { SCREEN_TYPES, SAMPLE_SCREENS } from "./data.js";
 import {
+  collection,
+  getDocs,
   doc,
   setDoc,
   addDoc,
-  collection,
-  getDocs
+  query,
+  where
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
-document.getElementById("ปุ่มเริ่ม").addEventListener("click", เริ่มใส่ข้อมูล);
+(async function init() {
+  const me = await requireAuth();
+  renderShell(PAGE.SCR009); // not a real SCR page, but for layout
 
-(function renderUserReference() {
-  var list = document.getElementById("seed-user-reference");
-  if (!list || !window.SEED_DATA) return;
-  list.innerHTML = window.SEED_DATA.users.map(function (u) {
-    return "<li>" + u.name + " — " + u.email + "</li>";
-  }).join("");
+  // ตรวจสิทธิ์: BA หรือ SA เท่านั้น
+  if (me.role !== "BA" && me.role !== "SA") {
+    document.querySelector(".main").innerHTML = `
+      <div class="page-header"><h1 class="page-title">เข้าถึงไม่ได้</h1></div>
+      <div class="card info-banner danger">
+        <p>เพียง BA (นักวิเคราะห์ธุรกิจ) หรือ SA (นักวิเคราะห์ระบบ) เท่านั้นที่สามารถเข้าถึงหน้านี้ได้</p>
+        <p>บทบาทปัจจุบันของคุณ: <strong>${me.role}</strong></p>
+      </div>`;
+    return;
+  }
+
+  // แสดงรายชื่อผู้ใช้
+  const users = window.SEED_DATA?.users || [];
+  const userList = document.getElementById("seed-user-reference");
+  if (userList) {
+    userList.innerHTML = users.map(u =>
+      `<li>${u.name} — <code>${u.email}</code></li>`
+    ).join("");
+  }
+
+  // ปุ่มเริ่ม
+  document.getElementById("btn-seed").addEventListener("click", startSeed);
 })();
 
-async function เริ่มใส่ข้อมูล() {
-  var ปุ่ม = document.getElementById("ปุ่มเริ่ม");
-  var กล่องสถานะ = document.getElementById("สถานะ");
-  ปุ่ม.disabled = true;
-  กล่องสถานะ.textContent = "รอตรวจสอบการล็อกอิน…\n";
-  await window.AUTH_READY;
-  กล่องสถานะ.textContent += "กำลังใส่ข้อมูล…\n";
+async function startSeed() {
+  const btn = document.getElementById("btn-seed");
+  const logArea = document.getElementById("log-area");
+  btn.disabled = true;
+  logArea.textContent = "";
 
   try {
+    log("รอตรวจสอบการล็อกอิน…");
+    const me = await requireAuth();
+
+    log("กำลังโหลดรายชื่อผู้ใช้จริงจาก Firestore…");
     const userSnapshot = await getDocs(collection(db, "users"));
     const nameToId = {};
-    userSnapshot.forEach(function (docSnap) {
+    userSnapshot.forEach(docSnap => {
       nameToId[docSnap.data().name] = docSnap.id;
     });
-    กล่องสถานะ.textContent += "อ่านรายชื่อผู้ใช้จริงจาก Firestore แล้ว " + userSnapshot.size + " คน\n";
+    log(`✓ อ่านผู้ใช้ได้ ${userSnapshot.size} คน`);
 
-    function resolveId(name) {
-      return name && nameToId[name] ? nameToId[name] : null;
+    // ตรวจสอบว่าชื่อทั้งหมดมีอยู่ในระบบหรือไม่
+    const requiredNames = new Set();
+    SAMPLE_SCREENS.forEach(s => {
+      s.assignees?.forEach(a => requiredNames.add(a.user_name));
+      s.assignees?.forEach(a => requiredNames.add(a.assigned_by_name));
+      s.statusHistory?.forEach(h => requiredNames.add(h.changed_by_name));
+    });
+
+    const missingNames = Array.from(requiredNames).filter(n => !nameToId[n]);
+    if (missingNames.length > 0) {
+      log(`\n❌ ไม่พบชื่อผู้ใช้เหล่านี้ในระบบ (ต้องสมัครสมาชิกก่อน):`);
+      missingNames.forEach(n => log(`   - ${n}`));
+      showToast(`ยังไม่มีชื่อ ${missingNames.join(", ")} ในระบบ กรุณาสมัครสมาชิกให้ครบก่อน`, "warning");
+      return;
     }
 
-    for (var t of window.SEED_DATA.screenTypes) {
-      await setDoc(doc(db, "screenTypes", t.id), t);
+    log("กำลังเขียน screenTypes…");
+    for (const t of SCREEN_TYPES) {
+      await setDoc(doc(db, "screenTypes", t.code), {
+        code: t.code,
+        label: t.label,
+        is_active: t.is_active
+      });
     }
-    กล่องสถานะ.textContent += "✅ screenTypes " + window.SEED_DATA.screenTypes.length + " รายการ\n";
+    log(`✓ screenTypes ${SCREEN_TYPES.length} รายการ`);
 
-    var จำนวนประวัติรวม = 0;
-    var จำนวนที่ข้าม = 0;
-    for (var s of window.SEED_DATA.screens) {
-      var { statusHistory, ...screenDoc } = s;
-      screenDoc.assignees = (screenDoc.assignees || []).map(function (a) {
-        const userId = resolveId(a.user_name);
-        if (!userId) จำนวนที่ข้าม++;
-        return {
-          user_id: userId,
+    log("กำลังเขียน screens และ statusHistory…");
+    let totalHistory = 0;
+    for (const sampleScreen of SAMPLE_SCREENS) {
+      // ตรวจสอบว่า code นี้มีเอกสารอยู่และไม่ได้ลบแล้วหรือไม่
+      const existing = await getDocs(
+        query(
+          collection(db, "screens"),
+          where("code", "==", sampleScreen.code),
+          where("is_deleted", "==", false)
+        )
+      );
+      if (existing.size > 0) {
+        log(`⊘ ${sampleScreen.code} มีอยู่แล้ว ข้าม`);
+        continue;
+      }
+
+      // สร้างเอกสาร screens ใหม่
+      const newRef = doc(collection(db, "screens"));
+      const screenType = SCREEN_TYPES.find(t => t.code === sampleScreen.type_id);
+
+      const screenDoc = {
+        screens_id: newRef.id,
+        code: sampleScreen.code,
+        name: sampleScreen.name,
+        description: sampleScreen.description,
+        type: {
+          type_id: screenType.code,
+          label: screenType.label
+        },
+        assignees: (sampleScreen.assignees || []).map(a => ({
+          user_id: nameToId[a.user_name] || null,
           user_name: a.user_name,
           role: a.role,
-          assigned_by: resolveId(a.assigned_by_name),
-          assigned_at: a.assigned_at
-        };
-      }).filter(function (a) { return a.user_id !== null; });
+          assigned_by: nameToId[a.assigned_by_name] || null,
+          assigned_at: a.assigned_at,
+          origin_label: "ManualEntry",
+          ai_confidence: null,
+          ai_reason: null
+        })).filter(a => a.user_id !== null), // ลบรายการที่ไม่พบชื่อ
+        origin_label: sampleScreen.origin_label,
+        ai_confidence: sampleScreen.ai_confidence,
+        is_suggested: sampleScreen.is_suggested,
+        current_status: sampleScreen.current_status,
+        is_deleted: false,
+        created_by: me.user_id,
+        created_by_name: me.name,
+        created_at: nowIso(),
+        updated_at: nowIso()
+      };
 
-      var newRef = doc(collection(db, "screens"));
-      screenDoc.screens_id = newRef.id;
-      screenDoc.updated_at = new Date().toISOString();
       await setDoc(newRef, screenDoc);
-      for (var h of statusHistory) {
-        await addDoc(collection(db, "screens", newRef.id, "statusHistory"), {
-          changed_by: resolveId(h.changed_by_name),
-          changed_by_name: h.changed_by_name,
-          changed_at: h.changed_at,
-          old_status: h.old_status,
-          new_status: h.new_status,
-          reason: h.reason,
-          note: h.note
-        });
-        จำนวนประวัติรวม++;
+      log(`✓ ${sampleScreen.code}: ${sampleScreen.name}`);
+
+      // เขียน statusHistory ถ้ามี status != NotStarted
+      for (const hist of (sampleScreen.statusHistory || [])) {
+        await addDoc(
+          collection(db, "screens", newRef.id, "statusHistory"),
+          {
+            changed_by: nameToId[hist.changed_by_name] || null,
+            changed_by_name: hist.changed_by_name,
+            changed_at: hist.changed_at,
+            old_status: hist.old_status,
+            new_status: hist.new_status,
+            reason: hist.reason,
+            note: hist.note
+          }
+        );
+        totalHistory++;
       }
     }
-    กล่องสถานะ.textContent += "✅ screens " + window.SEED_DATA.screens.length + " รายการ\n";
-    กล่องสถานะ.textContent += "✅ statusHistory " + จำนวนประวัติรวม + " รายการ (subcollection ของแต่ละ screens)\n";
-    if (จำนวนที่ข้าม > 0) {
-      กล่องสถานะ.textContent += "⚠️ ข้ามการมอบหมาย " + จำนวนที่ข้าม + " รายการ เพราะยังไม่พบชื่อผู้ใช้นั้นในระบบ (สมัครสมาชิกให้ครบแล้วมอบหมายเพิ่มทีหลังได้)\n";
-    }
 
-    กล่องสถานะ.textContent += "\nเสร็จแล้ว — เปิด Firebase Console ดูข้อมูลได้เลย";
+    log(`✓ screens ${SAMPLE_SCREENS.length} รายการ`);
+    log(`✓ statusHistory ${totalHistory} รายการ (subcollection)`);
+    log("\n✓ เสร็จแล้ว — เปิด Firebase Console ตรวจสอบข้อมูลได้");
+    showToast("ใส่ข้อมูลตัวอย่างสำเร็จ", "success");
+
   } catch (err) {
-    กล่องสถานะ.textContent += "\n❌ ใส่ข้อมูลไม่สำเร็จ: " + err.message;
+    log(`\n❌ เกิดข้อผิดพลาด: ${err.message}`);
+    showToast("เกิดข้อผิดพลาด: " + err.message, "danger");
   } finally {
-    ปุ่ม.disabled = false;
+    btn.disabled = false;
   }
+}
+
+function log(msg) {
+  const logArea = document.getElementById("log-area");
+  logArea.textContent += msg + "\n";
+  logArea.scrollTop = logArea.scrollHeight;
 }

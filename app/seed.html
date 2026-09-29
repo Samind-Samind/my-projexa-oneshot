@@ -1,47 +1,44 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
-<title>ใส่ข้อมูลตัวอย่างลง Firestore — Screen Tracking</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ใส่ข้อมูลตัวอย่าง — Projexa</title>
 <link rel="stylesheet" href="css/style.css">
-<script type="module" src="js/common.js"></script>
-<script src="js/data.js" defer></script>
 </head>
 <body>
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-group">
-      <img src="assets/logo-full-new.png" alt="Projexa" class="sidebar-logo">
-      <a class="sidebar-item" href="scr-009.html">ทะเบียนหน้าจอ</a>
+  <aside id="sidebar"></aside>
+  <main class="main">
+    <div class="page-header">
+      <h1 class="page-title">ใส่ข้อมูลตัวอย่าง</h1>
+      <p class="page-sub">
+        เครื่องมือรันครั้งเดียวตอนตั้งค่าโปรเจกต์ — กดปุ่มด้านล่างเพื่อคัดลอกข้อมูลตัวอย่างจาก
+        <code>js/data.js</code> ขึ้นไปเป็นข้อมูลตัวอย่างบน Firestore (screenTypes · screens · statusHistory)
+      </p>
     </div>
-    <div id="current-user-bar" class="sidebar-user-group"></div>
-  </nav>
-  <main class="content">
-    <div class="page-header"><h1>ใส่ข้อมูลตัวอย่างลง Firestore</h1></div>
-    <p class="page-sub">
-      หน้านี้ใช้ครั้งเดียวตอนตั้งค่าโปรเจกต์ (ต้องล็อกอินแล้วเพราะ <code>firestore.rules</code>
-      บังคับ <code>request.auth != null</code>) — กดปุ่มด้านล่างเพื่อคัดลอกข้อมูลตัวอย่างจาก
-      <code>js/data.js</code> ขึ้นไปเป็นข้อมูลตัวอย่างบน Firestore (screenTypes · screens ·
-      statusHistory)
-    </p>
+
     <div class="card">
-      <h2>ก่อนกดปุ่มด้านล่าง</h2>
+      <div class="card-title">ก่อนกดปุ่มด้านล่าง</div>
       <p>สมัครสมาชิกให้ครบก่อนผ่าน <a href="signup.html">หน้าสมัครสมาชิก</a> (ผู้ใช้ตัวอย่างในสโคปนี้):</p>
       <ul id="seed-user-reference"></ul>
-      <p class="note">ผู้รับผิดชอบใน SCR-101–106 จะถูกผูกด้วยชื่อที่ตรงกับรายชื่อนี้ — ถ้ายังไม่สมัครสมาชิกคนไหน รายการนั้นจะถูกข้ามการมอบหมาย (แก้เพิ่มทีหลังได้ที่หน้า "มอบหมายผู้รับผิดชอบ")</p>
+      <p class="muted">ผู้รับผิดชอบใน SCR-101–108 จะถูกผูกด้วยชื่อที่ตรงกับรายชื่อนี้ — ถ้ายังไม่สมัครสมาชิกคนไหน รายการนั้นจะถูกข้ามการมอบหมาย</p>
     </div>
 
     <div class="card">
-      <div class="btn-row">
-        <button type="button" id="ปุ่มเริ่ม" class="btn btn-primary">เริ่มใส่ข้อมูลตัวอย่าง</button>
+      <div class="form-actions">
+        <button type="button" id="btn-seed" class="btn btn-primary">ใส่ข้อมูลตัวอย่าง</button>
       </div>
-      <div id="สถานะ" style="margin-top:16px; white-space:pre-line;"></div>
+      <div id="log-area" style="margin-top: 16px; white-space: pre-line; font-family: monospace; font-size: 0.875rem; max-height: 300px; overflow-y: auto; padding: 8px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;"></div>
     </div>
 
-    <a class="btn btn-secondary" href="scr-009.html">← กลับไปทะเบียนหน้าจอ</a>
+    <div class="stack">
+      <a class="btn btn-secondary" href="scr-009.html">← กลับไปทะเบียนหน้าจอ</a>
+    </div>
   </main>
 </div>
 
+<div id="toast-root"></div>
 <script type="module" src="js/seed.js"></script>
 </body>
 </html>

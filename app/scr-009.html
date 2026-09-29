@@ -1,99 +1,40 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SCR-009 ทะเบียนหน้าจอ — Projexa</title>
 <link rel="stylesheet" href="css/style.css">
-<script type="module" src="js/common.js"></script>
 </head>
 <body>
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-group">
-      <img src="assets/logo-full-new.png" alt="Projexa" class="sidebar-logo">
+  <aside id="sidebar"></aside>
+  <main class="main">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">ทะเบียนหน้าจอ</h1>
+        <div class="page-sub">SCR-009 · รายการหน้าจอและสถานะความก้าวหน้า</div>
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-secondary hidden" id="btn-assign-selected" type="button">มอบหมายที่เลือก (<span id="sel-count">0</span>)</button>
+        <a class="btn btn-primary hidden" id="btn-add" href="scr-010.html">+ เพิ่มหน้าจอ</a>
+      </div>
     </div>
-    <div class="sidebar-group">
-      <a class="sidebar-item active" href="scr-009.html" data-acl-page="registry">SCR-009 ทะเบียนหน้าจอ</a>
-      <a class="sidebar-item" href="scr-010.html" data-acl-page="detailCreate">SCR-010 รายละเอียดหน้าจอ</a>
-      <a class="sidebar-item" href="scr-013.html" data-acl-page="assign">SCR-013 มอบหมายผู้รับผิดชอบ</a>
-      <a class="sidebar-item" href="scr-016.html" data-acl-page="progress">SCR-016 บันทึกความก้าวหน้า</a>
-    </div>
-    <div id="current-user-bar" class="sidebar-user-group"></div>
-  </nav>
-  <main class="content">
-    <div class="breadcrumb">Screen Tracking<span class="sep">/</span>ทะเบียนหน้าจอ</div>
-    <div class="page-header"><h1>ทะเบียนหน้าจอ</h1></div>
+
+    <div id="scope-banner" class="info-banner hidden"></div>
 
     <div class="card">
-      <div class="field-label-row" style="margin-bottom: var(--sp-3);">
-        <h2 style="margin-bottom:0;">รายการหน้าจอทั้งหมด</h2>
-        <div style="display:flex; gap: var(--sp-2);">
-          <a id="batch-assign-link" class="btn btn-secondary" href="#" style="pointer-events:none; opacity:.45;">มอบหมายเป็นชุด</a>
-          <a id="create-screen-link" class="btn btn-primary" href="scr-010.html">+ สร้างหน้าจอใหม่</a>
-        </div>
+      <div class="filter-bar">
+        <input type="search" class="search-input" id="f-search" placeholder="ค้นหารหัสหรือชื่อหน้าจอ">
+        <select id="f-type"><option value="">ทุกประเภท</option></select>
+        <select id="f-status"><option value="">ทุกสถานะ</option></select>
       </div>
-
-      <div id="registry-body-wrap">
-        <div class="filter-bar">
-          <div class="field">
-            <label for="filter-type">ประเภท</label>
-            <select id="filter-type">
-              <option value="">ทั้งหมด</option>
-              <option value="PROCESS">Process</option>
-              <option value="INQUIRY">Inquiry</option>
-              <option value="REPORTUI">Report UI</option>
-              <option value="SERVICE">Service</option>
-              <option value="REPORT">Report</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="filter-status">สถานะ</label>
-            <select id="filter-status">
-              <option value="">ทั้งหมด</option>
-              <option value="NotStarted">Not Started</option>
-              <option value="Analysis">Analysis</option>
-              <option value="Design">Design</option>
-            </select>
-          </div>
-          <div class="filter-bar-actions">
-            <button type="button" class="btn btn-secondary clear-filter-btn">ล้าง filter</button>
-          </div>
-        </div>
-
-        <p class="selected-count">เลือกแล้ว <strong id="selected-count-value">0</strong> หน้าจอ (เลือกเพื่อ "มอบหมายเป็นชุด")</p>
-
-        <div id="registry-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th class="select-col"><input type="checkbox" id="select-all-screens" aria-label="เลือกทั้งหมด"></th>
-                <th>รหัส</th>
-                <th>ชื่อหน้าจอ</th>
-                <th>ประเภท</th>
-                <th>สถานะ</th>
-                <th>ผู้รับผิดชอบ</th>
-                <th>จัดการ</th>
-              </tr>
-            </thead>
-            <tbody id="screen-registry-body">
-              <tr><td colspan="7" class="loading-note">กำลังโหลดข้อมูลจาก Firestore…</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div id="no-result-state" class="empty-state" hidden>
-          <p>ไม่พบหน้าจอที่ตรงเงื่อนไข</p>
-          <button type="button" class="btn btn-secondary clear-filter-btn">ล้าง filter</button>
-        </div>
-      </div>
-
-      <div id="collection-empty-state" class="empty-state" hidden>
-        <p>ยังไม่มีหน้าจอในระบบ เริ่มต้นด้วยการสร้างหน้าจอแรกของโครงการ</p>
-        <a id="create-screen-link-empty" class="btn btn-primary" href="scr-010.html">สร้างหน้าจอใหม่</a>
-      </div>
+      <div id="list-area"><div class="loading-box"><div class="spinner spinner-lg"></div></div></div>
+      <div class="table-footer" id="list-footer"></div>
     </div>
   </main>
 </div>
+<div id="toast-root"></div>
 <script type="module" src="js/screen-registry.js"></script>
 </body>
 </html>

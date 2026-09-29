@@ -1,84 +1,128 @@
-// ─────────────────────────────────────────────────────────────
-// js/common.js — utility ที่ใช้ร่วมกันทุกหน้าจอ (โหลดก่อน script ของแต่ละหน้า)
-// เป็น ES module (type="module") เพราะต้องเรียก js/auth.js เพื่อตรวจสอบ
-// ล็อกอินก่อนแสดงเนื้อหาของทุกหน้า ยกเว้น login.html/signup.html
-// ─────────────────────────────────────────────────────────────
+// js/common.js — utility ร่วมทุกหน้า: auth guard, sidebar, toast, modal, format
+import { auth } from "./firebase-config.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+import { getUserProfile, signOutUser } from "./auth.js";
+import { canAccessPage, PAGE } from "./acl.js";
 
-import { guardPage, logout } from "./auth.js";
-import { canAccessPage } from "./acl.js";
+export const STATUSES = ["NotStarted", "Analysis", "Design"];
+export const STATUS_LABEL = { NotStarted: "Not Started", Analysis: "Analysis", Design: "Design" };
 
-window.showToast = function (message, type) {
-  type = type || "success";
-  var toast = document.createElement("div");
-  toast.className = "toast toast-" + type;
-  toast.textContent = message;
-  document.body.appendChild(toast);
-  requestAnimationFrame(function () { toast.classList.add("is-visible"); });
-  if (type === "danger") {
-    var closeBtn = document.createElement("button");
-    closeBtn.type = "button";
-    closeBtn.className = "toast-close";
-    closeBtn.setAttribute("aria-label", "ปิด");
-    closeBtn.textContent = "×";
-    closeBtn.addEventListener("click", function () { toast.remove(); });
-    toast.appendChild(closeBtn);
-  } else {
-    setTimeout(function () {
-      toast.classList.remove("is-visible");
-      setTimeout(function () { toast.remove(); }, 200);
-    }, 4000);
-  }
-};
+export const nowIso = () => new Date().toISOString();
 
-// แปลง Date/Firestore Timestamp เป็น "dd/mm/yyyy hh:mm" แบบเดียวกับตัวอย่าง LeaveEasy
-window.formatDateTime = function (value) {
-  if (!value) return "-";
-  var d = typeof value.toDate === "function" ? value.toDate() : new Date(value);
-  var dd = String(d.getDate()).padStart(2, "0");
-  var mm = String(d.getMonth() + 1).padStart(2, "0");
-  var yyyy = d.getFullYear();
-  var hh = String(d.getHours()).padStart(2, "0");
-  var min = String(d.getMinutes()).padStart(2, "0");
-  return dd + "/" + mm + "/" + yyyy + " " + hh + ":" + min;
-};
+const ESC_MAP = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+export function esc(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => ESC_MAP[c]);
+}
 
-window.esc = function (value) {
-  var div = document.createElement("div");
-  div.textContent = value == null ? "" : String(value);
-  return div.innerHTML;
-};
+export function formatDateTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d)) return "-";
+  return d.toLocaleString("th-TH", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
-// ซ่อนเนื้อหาหน้าไว้ก่อนจนกว่าจะตรวจสอบล็อกอินเสร็จ กันไม่ให้เห็นข้อมูลวาบขึ้นมา
-// ก่อน redirect ไป login.html (กรณียังไม่ได้ล็อกอิน)
-document.documentElement.style.visibility = "hidden";
+export function statusPill(status) {
+  const s = STATUSES.includes(status) ? status : "NotStarted";
+  return `<span class="status-pill status-${s}">${esc(STATUS_LABEL[s])}</span>`;
+}
 
-// ซ่อนลิงก์เมนูด้านข้างที่ไปหน้าที่บทบาทของผู้ใช้ไม่มีสิทธิ์ใช้งานอะไรเลย
-// (ไม่ใช่แค่ disable — เอาออกจากเมนูไปเลยตามที่ user ยืนยัน)
-function applyNavAccess(role) {
-  document.querySelectorAll(".sidebar-item[data-acl-page]").forEach(function (link) {
-    var page = link.getAttribute("data-acl-page");
-    if (!canAccessPage(role, page)) link.hidden = true;
+// ── Toast ──
+function toastRoot() {
+  let el = document.getElementById("toast-root");
+  if (!el) { el = document.createElement("div"); el.id = "toast-root"; document.body.appendChild(el); }
+  return el;
+}
+
+export function showToast(message, type = "info") {
+  const t = document.createElement("div");
+  t.className = `toast toast-${type}`;
+  t.setAttribute("role", "status");
+  t.textContent = message;
+  toastRoot().appendChild(t);
+  setTimeout(() => { t.classList.add("toast-hide"); setTimeout(() => t.remove(), 250); }, 3500);
+}
+
+// ── Modal (คืน Promise<boolean>) ──
+export function openModal({ title, bodyHtml = "", confirmText = "ยืนยัน", danger = false }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "modal-backdrop";
+    wrap.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-header"><h2>${esc(title)}</h2></div>
+        <div class="modal-body">${bodyHtml}</div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-act="cancel">ยกเลิก</button>
+          <button type="button" class="btn ${danger ? "btn-danger" : "btn-primary"}" data-act="ok">${esc(confirmText)}</button>
+        </div>
+      </div>`;
+    const onKey = (e) => { if (e.key === "Escape") close(false); };
+    const close = (v) => { document.removeEventListener("keydown", onKey); wrap.remove(); resolve(v); };
+    wrap.addEventListener("click", (e) => {
+      if (e.target === wrap) return close(false);
+      const act = e.target.closest("[data-act]")?.dataset.act;
+      if (act === "ok") close(true);
+      if (act === "cancel") close(false);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.appendChild(wrap);
+    wrap.querySelector('[data-act="ok"]').focus();
   });
 }
 
-function renderUserBar(user) {
-  var bar = document.getElementById("current-user-bar");
-  if (!bar) return;
-  bar.innerHTML =
-    '<span class="sidebar-user-name">' + esc(user.name) + (user.role ? " (" + esc(user.role) + ")" : "") + "</span>" +
-    '<button type="button" id="logout-btn" class="sidebar-user-logout">ออกจากระบบ</button>';
-  document.getElementById("logout-btn").addEventListener("click", function () {
-    logout();
+// ── Auth guard ──
+let currentUser = null;
+
+export function requireAuth() {
+  return new Promise((resolve) => {
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      unsub();
+      if (!user) { location.href = "login.html"; return; }
+      try {
+        const p = await getUserProfile(user.uid);
+        if (!p) {
+          await signOutUser();
+          try { sessionStorage.setItem("loginToast", "ไม่พบโปรไฟล์ผู้ใช้ กรุณาสมัครสมาชิกหรือติดต่อผู้ดูแล"); } catch (e) { /* ignore */ }
+          location.href = "login.html";
+          return;
+        }
+        currentUser = { uid: user.uid, user_id: user.uid, email: user.email, name: p.name, role: p.role };
+        resolve(currentUser);
+      } catch (e) {
+        showToast("โหลดข้อมูลผู้ใช้ไม่สำเร็จ: " + (e?.message || e), "danger");
+      }
+    });
   });
 }
 
-// window.AUTH_READY: ให้ script ของแต่ละหน้า (screen-registry.js ฯลฯ) await
-// ก่อนเรียก Firestore ทุกครั้ง เพราะ firestore.rules ต้องการ request.auth != null
-// — ถ้า query ก่อน onAuthStateChanged ยืนยันตัวตนเสร็จจะโดนปฏิเสธสิทธิ์
-window.AUTH_READY = guardPage().then(function (user) {
-  window.CURRENT_USER = user;
-  document.documentElement.style.visibility = "";
-  renderUserBar(user);
-  applyNavAccess(user.role);
-  return user;
-});
+// ── Sidebar ──
+const NAV = [
+  { page: PAGE.SCR009, href: "scr-009.html", label: "ทะเบียนหน้าจอ", code: "SCR-009" },
+  { page: PAGE.SCR010, href: "scr-010.html", label: "เพิ่ม/แก้ไขหน้าจอ", code: "SCR-010" },
+  { page: PAGE.SCR013, href: "scr-013.html", label: "มอบหมายผู้รับผิดชอบ", code: "SCR-013" },
+  { page: PAGE.SCR016, href: "scr-016.html", label: "บันทึกความก้าวหน้า", code: "SCR-016" }
+];
+
+export function renderShell(activePage) {
+  const side = document.getElementById("sidebar");
+  if (!side) return;
+  const user = currentUser;
+  const links = NAV.filter((n) => !user || canAccessPage(user.role, n.page)).map((n) =>
+    `<a class="nav-link${n.page === activePage ? " active" : ""}" href="${n.href}">
+       <span class="nav-code">${n.code}</span><span>${esc(n.label)}</span></a>`).join("");
+  side.classList.add("sidebar");
+  side.innerHTML = `
+    <div class="sidebar-brand"><img src="assets/logo-full.png" alt="Projexa"></div>
+    <button type="button" class="sidebar-toggle" aria-label="เมนู">☰ เมนู</button>
+    <nav class="sidebar-nav">${links}</nav>
+    <div class="sidebar-user">
+      <div class="sidebar-user-name">${esc(user?.name || "")}</div>
+      <div class="sidebar-user-role">${esc(user?.role || "")}</div>
+      <button type="button" class="btn btn-ghost btn-sm sidebar-logout" id="btn-logout">ออกจากระบบ</button>
+    </div>`;
+  side.querySelector(".sidebar-toggle").addEventListener("click", () => side.classList.toggle("open"));
+  side.querySelector("#btn-logout").addEventListener("click", async () => {
+    await signOutUser();
+    location.href = "login.html";
+  });
+}

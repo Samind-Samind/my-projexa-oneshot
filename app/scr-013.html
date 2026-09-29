@@ -1,110 +1,71 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="UTF-8">
-<title>SCR-013 มอบหมายผู้รับผิดชอบ — Projexa</title>
-<link rel="stylesheet" href="css/style.css">
-<script type="module" src="js/common.js"></script>
-</head>
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SCR-013 มอบหมายผู้รับผิดชอบ — Projexa</title><link rel="stylesheet" href="css/style.css"></head>
 <body>
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-group">
-      <img src="assets/logo-full-new.png" alt="Projexa" class="sidebar-logo">
-    </div>
-    <div class="sidebar-group">
-      <a class="sidebar-item" href="scr-009.html" data-acl-page="registry">SCR-009 ทะเบียนหน้าจอ</a>
-      <a class="sidebar-item" href="scr-010.html" data-acl-page="detailCreate">SCR-010 รายละเอียดหน้าจอ</a>
-      <a class="sidebar-item active" href="scr-013.html" data-acl-page="assign">SCR-013 มอบหมายผู้รับผิดชอบ</a>
-      <a class="sidebar-item" href="scr-016.html" data-acl-page="progress">SCR-016 บันทึกความก้าวหน้า</a>
-    </div>
-    <div id="current-user-bar" class="sidebar-user-group"></div>
-  </nav>
-  <main class="content">
-    <div class="breadcrumb"><a href="scr-009.html">Screen Tracking</a><span class="sep">/</span>มอบหมายผู้รับผิดชอบ</div>
-    <div class="page-header"><h1>มอบหมายผู้รับผิดชอบ</h1></div>
-
-    <form id="assign-form">
-      <div class="split-layout">
-        <div class="card">
-          <div class="field-label-row" style="margin-bottom: var(--sp-3);">
-            <h2 style="margin-bottom:0;">เลือกหน้าจอที่จะมอบหมาย</h2>
-          </div>
-          <p class="selected-count">เลือกแล้ว <strong id="assign-selected-count">0</strong> หน้าจอ</p>
-          <table>
-            <thead>
-              <tr>
-                <th class="select-col"></th>
-                <th>รหัส</th>
-                <th>ชื่อหน้าจอ</th>
-                <th>ผู้รับผิดชอบปัจจุบัน</th>
-              </tr>
-            </thead>
-            <tbody id="assign-screen-body">
-              <tr><td colspan="4" class="loading-note">กำลังโหลดข้อมูลจาก Firestore…</td></tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="card">
-          <h2>มอบหมายผู้รับผิดชอบ</h2>
-
-          <div class="field">
-            <button type="button" class="btn btn-secondary" id="ai-suggest-assignee-btn">ให้ AI ช่วยแนะนำผู้รับผิดชอบ</button>
-            <p class="note" style="margin:var(--sp-2) 0 0;">ใช้ได้เมื่อเลือกหน้าจอทางซ้ายไว้พอดี 1 หน้าจอ — AI จะดูประวัติงานเก่า/ความก้าวหน้าที่แต่ละคนเคยบันทึกเพื่อช่วยแนะนำ</p>
-          </div>
-
-          <p id="ai-assignee-waiting" class="note" hidden>AI กำลังวิเคราะห์ประวัติของผู้ใช้ทุกคน...</p>
-
-          <div id="ai-assignee-block" class="ai-block" hidden>
-            <p style="margin:0 0 var(--sp-2);">AI แนะนำ: <strong id="ai-assignee-suggested-name"></strong> เป็น <strong id="ai-assignee-suggested-role"></strong> (ai_confidence: <span id="ai-assignee-suggested-confidence"></span>)</p>
-            <p class="note" style="margin:0 0 var(--sp-3);" id="ai-assignee-suggested-reason"></p>
-            <button type="button" class="btn btn-primary" id="ai-assignee-apply-btn">ใช้คำแนะนำนี้</button>
-            <button type="button" class="btn btn-secondary" id="ai-assignee-dismiss-btn">เลือกเองแทน</button>
-          </div>
-
-          <p id="ai-assignee-timeout-msg" class="note" hidden>AI แนะนำไม่สำเร็จ — ไม่เป็นไร กรุณาเลือกผู้รับผิดชอบได้จากรายการด้านล่างเองได้ทันที</p>
-
-          <div class="field">
-            <label for="assign-user-select">ผู้รับผิดชอบ</label>
-            <select id="assign-user-select"><option value="">กำลังโหลดผู้ใช้…</option></select>
-          </div>
-          <div class="field">
-            <label for="assign-role-select">บทบาท</label>
-            <select id="assign-role-select">
-              <option value="SA">SA</option>
-              <option value="BA">BA</option>
-              <option value="Dev" selected>Dev</option>
-              <option value="Tester">Tester</option>
-            </select>
-          </div>
-          <div style="display:flex; gap: var(--sp-3);">
-            <button type="submit" class="btn btn-primary">มอบหมายและบันทึกประวัติ</button>
-            <button type="button" class="btn btn-danger" id="unassign-btn">ยกเลิกมอบหมาย (บทบาทที่เลือก)</button>
-          </div>
-
-          <div id="assign-result-wrap">
-            <h3 style="margin-top: var(--sp-6);">ผลลัพธ์การมอบหมายล่าสุด</h3>
-            <ul id="assign-result-list" class="result-list"></ul>
-            <p class="note" id="assign-result-empty">ยังไม่มีการมอบหมายในรอบนี้</p>
-          </div>
-        </div>
+  <aside id="sidebar"></aside>
+  <main class="main">
+    <div class="breadcrumb"><a href="scr-009.html">ทะเบียนหน้าจอ</a> / มอบหมายผู้รับผิดชอบ</div>
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">มอบหมายผู้รับผิดชอบ</h1>
+        <div class="page-sub">SCR-013 · มอบหมาย/ยกเลิกมอบหมายแบบ batch หลายหน้าจอพร้อมกัน</div>
       </div>
-    </form>
+      <div class="page-actions">
+        <button type="button" class="btn btn-primary" id="btn-save" disabled>บันทึกการเปลี่ยนแปลง</button>
+      </div>
+    </div>
+
+    <div id="loading" class="loading-box"><span class="spinner spinner-lg"></span></div>
+
+    <div id="content" class="stack hidden">
+      <section class="card stack" id="picker-card">
+        <div class="card-title">เลือกหน้าจอ</div>
+        <div class="filter-bar">
+          <input type="search" class="search-input" id="picker-search" placeholder="ค้นหารหัส/ชื่อหน้าจอ">
+          <button type="button" class="btn btn-secondary btn-sm" id="btn-add-picked">เพิ่มหน้าจอที่ติ๊กลงรายการ</button>
+        </div>
+        <div class="table-wrap"><table class="table"><thead><tr><th class="col-check"></th><th>รหัส</th><th>ชื่อหน้าจอ</th><th>ผู้รับผิดชอบ</th></tr></thead>
+          <tbody id="picker-body"></tbody></table></div>
+      </section>
+
+      <section class="card stack">
+        <div class="card-title">หน้าจอที่จะมอบหมาย (<span id="sel-count">0</span>)</div>
+        <div id="selected-list"></div>
+      </section>
+
+      <section class="card stack">
+        <div class="card-title">มอบหมายให้ทุกหน้าจอในรายการ</div>
+        <div class="grid-2">
+          <div class="field">
+            <label>ผู้รับผิดชอบ (เลือกได้หลายคน) <span class="required">*</span></label>
+            <div id="user-list" class="stack"></div>
+          </div>
+          <div class="field">
+            <label for="work-role">บทบาทในงาน <span class="required">*</span></label>
+            <select id="work-role">
+              <option value="SA">SA</option><option value="BA">BA</option>
+              <option value="Dev" selected>Dev</option><option value="Tester">Tester</option>
+            </select>
+            <div class="form-actions"><button type="button" class="btn btn-primary" id="btn-apply">เพิ่มผู้รับผิดชอบ</button></div>
+            <div class="field-hint">การเพิ่ม/ยกเลิกจะยังไม่บันทึกจนกว่าจะกด "บันทึกการเปลี่ยนแปลง"</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card stack">
+        <div class="card-title">ให้ AI ช่วยแนะนำผู้รับผิดชอบ</div>
+        <div class="row">
+          <select id="ai-screen"></select>
+          <button type="button" class="btn btn-secondary" id="btn-ai">ให้ AI ช่วยแนะนำผู้รับผิดชอบ</button>
+          <span class="spinner hidden" id="ai-spinner"></span>
+        </div>
+        <div class="field-hint">เลือกได้ทีละหน้าจอ · AI พิจารณาจากภาระงานปัจจุบันและประวัติการเปลี่ยนสถานะ</div>
+        <div id="ai-area"></div>
+      </section>
+    </div>
   </main>
 </div>
-
-<div class="modal-overlay" id="unassign-modal-overlay" hidden>
-  <div class="modal">
-    <h3>ยืนยันการยกเลิกมอบหมาย</h3>
-    <p id="unassign-modal-message" class="note"></p>
-    <div class="modal-actions">
-      <button type="button" class="btn btn-secondary" id="unassign-cancel-btn">ยกเลิก</button>
-      <button type="button" class="btn btn-danger" id="unassign-confirm-btn">ยืนยันยกเลิกมอบหมาย</button>
-    </div>
-  </div>
-</div>
-
+<div id="toast-root"></div>
 <script type="module" src="js/screen-assign.js"></script>
-</body>
-</html>
+</body></html>

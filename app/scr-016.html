@@ -1,87 +1,27 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SCR-016 บันทึกความก้าวหน้า — Projexa</title>
 <link rel="stylesheet" href="css/style.css">
-<script type="module" src="js/common.js"></script>
 </head>
 <body>
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-group">
-      <img src="assets/logo-full-new.png" alt="Projexa" class="sidebar-logo">
-    </div>
-    <div class="sidebar-group">
-      <a class="sidebar-item" href="scr-009.html" data-acl-page="registry">SCR-009 ทะเบียนหน้าจอ</a>
-      <a class="sidebar-item" href="scr-010.html" data-acl-page="detailCreate">SCR-010 รายละเอียดหน้าจอ</a>
-      <a class="sidebar-item" href="scr-013.html" data-acl-page="assign">SCR-013 มอบหมายผู้รับผิดชอบ</a>
-      <a class="sidebar-item active" href="scr-016.html" data-acl-page="progress">SCR-016 บันทึกความก้าวหน้า</a>
-    </div>
-    <div id="current-user-bar" class="sidebar-user-group"></div>
-  </nav>
-  <main class="content">
-    <div class="breadcrumb"><a href="scr-009.html">Screen Tracking</a><span class="sep">/</span>บันทึกความก้าวหน้า</div>
-    <div class="page-header"><h1>บันทึกความก้าวหน้า</h1></div>
-    <p class="page-sub" id="progress-screen-label">กำลังโหลด…</p>
-
-    <div class="split-layout">
-      <div class="card">
-        <h2>เปลี่ยนสถานะความก้าวหน้า</h2>
-        <p class="page-sub" style="margin-bottom: var(--sp-3);">
-          สถานะปัจจุบัน:
-          <span id="current-status-value" class="status-chip is-neutral" data-status="NotStarted">-</span>
-          · อัปเดตล่าสุด: <span id="last-updated-value">-</span>
-        </p>
-        <p class="page-sub" style="margin-bottom: var(--sp-3);">
-          ผู้รับผิดชอบ: <span id="assignees-value" class="avatar-row">-</span>
-        </p>
-
-        <div class="status-btn-row">
-          <button type="button" class="status-select-btn" data-status="NotStarted">Not Started</button>
-          <button type="button" class="status-select-btn" data-status="Analysis">Analysis</button>
-          <button type="button" class="status-select-btn" data-status="Design">Design</button>
-        </div>
-
-        <div class="field" id="note-field">
-          <label for="note-input">ผลความก้าวหน้า</label>
-          <textarea id="note-input" rows="3" placeholder="เช่น ออกแบบหน้าจอเสร็จแล้ว รอ Dev Lead ตรวจทานก่อนเริ่มพัฒนา"></textarea>
-        </div>
-
-        <div class="field" id="reason-field" hidden>
-          <label for="reason-input">เหตุผล (บังคับกรอกเมื่อถอยสถานะ) *</label>
-          <textarea id="reason-input" rows="3" placeholder="เช่น พบข้อผิดพลาดจาก Design ต้องกลับไปทบทวน Business Rule เพิ่มเติม"></textarea>
-          <p class="field-error">กรุณากรอกเหตุผลก่อนบันทึก เนื่องจากเป็นการถอยสถานะ</p>
-        </div>
-
-        <button type="button" class="btn btn-primary" id="save-progress-btn" style="margin-top: var(--sp-3);">บันทึกความก้าวหน้า</button>
+  <aside id="sidebar"></aside>
+  <main class="main">
+    <div class="breadcrumb"><a href="scr-009.html">ทะเบียนหน้าจอ</a> / บันทึกความก้าวหน้า</div>
+    <div class="page-header">
+      <div>
+        <h1 class="page-title">บันทึกความก้าวหน้า</h1>
+        <div class="page-sub">SCR-016 · เปลี่ยนสถานะและดูประวัติ</div>
       </div>
-
-      <div class="card">
-        <h3>วงจรสถานะ (Workflow Stepper)</h3>
-        <div class="stepper">
-          <div class="stepper-step" data-status="NotStarted">
-            <span class="stepper-dot"></span>
-            <span class="stepper-label">Not Started</span>
-          </div>
-          <div class="stepper-step" data-status="Analysis">
-            <span class="stepper-dot"></span>
-            <span class="stepper-label">Analysis</span>
-          </div>
-          <div class="stepper-step" data-status="Design">
-            <span class="stepper-dot"></span>
-            <span class="stepper-label">Design</span>
-          </div>
-        </div>
-
-        <h3 style="margin-top: var(--sp-6);">ประวัติการเปลี่ยนสถานะ</h3>
-        <ul id="status-history-list" class="history-list">
-          <li class="history-item">กำลังโหลด…</li>
-        </ul>
-      </div>
+      <div class="page-actions"><a class="btn btn-secondary" href="scr-009.html">กลับทะเบียน</a></div>
     </div>
+    <div id="content"><div class="loading-box"><div class="spinner spinner-lg"></div></div></div>
   </main>
 </div>
+<div id="toast-root"></div>
 <script type="module" src="js/screen-progress.js"></script>
 </body>
 </html>

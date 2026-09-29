@@ -1,59 +1,42 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>สมัครสมาชิก — Projexa</title>
+<link rel="icon" href="assets/logo-icon.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-<div class="auth-shell">
-  <div class="auth-card card">
-    <img src="assets/logo-full-new.png" alt="Projexa" class="auth-logo">
-    <p class="page-sub">สมัครสมาชิกใหม่ด้วยอีเมลและรหัสผ่าน</p>
-
-    <form id="signup-form">
-      <div class="field" id="name-field">
-        <label for="name-input">ชื่อ-นามสกุล</label>
-        <input type="text" id="name-input" autocomplete="name" required>
-        <div class="field-error">กรุณากรอกชื่อ-นามสกุล</div>
-      </div>
-      <div class="field" id="email-field">
-        <label for="email-input">อีเมล</label>
-        <input type="email" id="email-input" autocomplete="username" required>
-        <div class="field-error">กรุณากรอกอีเมล</div>
-      </div>
-      <div class="field" id="password-field">
-        <label for="password-input">รหัสผ่าน</label>
-        <input type="password" id="password-input" autocomplete="new-password" required>
-        <div class="field-error">รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร</div>
-      </div>
-      <div class="field" id="confirm-password-field">
-        <label for="confirm-password-input">ยืนยันรหัสผ่าน</label>
-        <input type="password" id="confirm-password-input" autocomplete="new-password" required>
-        <div class="field-error">รหัสผ่านไม่ตรงกัน</div>
-      </div>
-      <div class="field" id="role-field">
-        <label for="role-select">บทบาท</label>
-        <select id="role-select" required>
-          <option value="">- เลือกบทบาท -</option>
-          <option value="PM">PM — Project Manager</option>
-          <option value="BA">BA — Business Analyst</option>
-          <option value="SA">SA — System Analyst</option>
-          <option value="DEV">DEV — Developer</option>
-          <option value="IMP">IMP — Implementer</option>
-        </select>
-        <div class="field-error">กรุณาเลือกบทบาท</div>
-      </div>
-
-      <div class="btn-row">
-        <button type="submit" id="signup-submit-btn" class="btn btn-primary" style="width:100%; justify-content:center;">สมัครสมาชิก</button>
-      </div>
-    </form>
-
-    <p class="auth-links">มีบัญชีอยู่แล้ว? <a href="login.html">เข้าสู่ระบบ</a></p>
-  </div>
-</div>
-
+<body class="auth-body">
+<main class="auth-card">
+  <img class="auth-logo" src="assets/logo-full.png" alt="Projexa">
+  <h1 class="auth-title">สมัครสมาชิก</h1>
+  <p class="auth-sub">สร้างบัญชีและเลือกบทบาทของคุณในโครงการ</p>
+  <form id="signup-form" novalidate>
+    <div class="field">
+      <label for="name">ชื่อ-นามสกุล <span class="required">*</span></label>
+      <input id="name" name="name" type="text" autocomplete="name">
+    </div>
+    <div class="field">
+      <label for="email">อีเมล <span class="required">*</span></label>
+      <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com">
+    </div>
+    <div class="field">
+      <label for="password">รหัสผ่าน <span class="required">*</span></label>
+      <input id="password" name="password" type="password" autocomplete="new-password" minlength="6">
+      <div class="field-hint">อย่างน้อย 6 ตัวอักษร</div>
+    </div>
+    <div class="field">
+      <label for="role">บทบาท <span class="required">*</span></label>
+      <select id="role" name="role"></select>
+      <div class="field-hint" id="role-desc"></div>
+    </div>
+    <div id="form-error" class="field-error form-error" role="alert" hidden></div>
+    <button type="submit" id="btn-signup" class="btn btn-primary btn-block">สมัครสมาชิก</button>
+  </form>
+  <p class="auth-foot">มีบัญชีอยู่แล้ว? <a href="login.html">เข้าสู่ระบบ</a></p>
+</main>
+<div id="toast-root"></div>
 <script type="module" src="js/signup.js"></script>
 </body>
 </html>

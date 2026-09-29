@@ -1,193 +1,203 @@
-// ─────────────────────────────────────────────────────────────
-// js/screen-progress.js — SCR-016 บันทึกความก้าวหน้า
-// อ่าน/เขียนจริงบน screens/{id} + subcollection screens/{id}/statusHistory
-// ─────────────────────────────────────────────────────────────
-
+// SCR-016 บันทึกความก้าวหน้า
+import { requireAuth, renderShell, showToast, formatDateTime, esc, nowIso, STATUSES, STATUS_LABEL, statusPill } from "./common.js";
+import { PAGE, canAccessPage, canRecordProgressFor, denyAccessAndRedirect } from "./acl.js";
 import { db } from "./firebase-config.js";
 import {
-  doc,
-  getDoc,
-  updateDoc,
-  collection,
-  getDocs,
-  addDoc
+  doc, getDoc, collection, getDocs, query, orderBy, writeBatch,
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { canRecordProgressFor, denyAccessAndRedirect } from "./acl.js";
 
-const statusOrder = ["NotStarted", "Analysis", "Design"];
-const statusLabel = { NotStarted: "Not Started", Analysis: "Analysis", Design: "Design" };
-const statusClass = { NotStarted: "is-neutral", Analysis: "is-current", Design: "is-current" };
+const me = await requireAuth();
+renderShell(PAGE.SCR016);
 
-const params = new URLSearchParams(window.location.search);
-const id = params.get("screen");
-
-const progressScreenLabel = document.getElementById("progress-screen-label");
-const currentStatusHolder = document.getElementById("current-status-value");
-const updatedAtEl = document.getElementById("last-updated-value");
-const assigneesEl = document.getElementById("assignees-value");
-const historyList = document.getElementById("status-history-list");
-const statusButtons = document.querySelectorAll(".status-select-btn");
-const stepperSteps = document.querySelectorAll(".stepper-step");
-const reasonField = document.getElementById("reason-field");
-const reasonInput = document.getElementById("reason-input");
-const noteInput = document.getElementById("note-input");
-const saveBtn = document.getElementById("save-progress-btn");
-
-let pendingStatus = null;
-
-function avatarInitial(name) {
-  return (name || "").trim().slice(0, 2) || "?";
+if (!canAccessPage(me.role, PAGE.SCR016)) {
+  denyAccessAndRedirect();
+} else {
+  init();
 }
 
-function renderAssignees(assignees) {
-  if (!assignees || !assignees.length) {
-    return '<span class="avatar-empty">— ยังไม่มอบหมาย —</span>';
-  }
-  return assignees.map(function (a) {
-    const reasonAttr = a.ai_reason ? ' title="AI แนะนำ: ' + esc(a.ai_reason) + '"' : "";
-    return '<span class="avatar">' + esc(avatarInitial(a.user_name)) +
-      '</span><span class="assignee-name"' + reasonAttr + '>' + esc(a.user_name) + " (" + esc(a.role) + ")" +
-      (a.ai_reason ? " ⓘ" : "") + "</span>";
-  }).join(" ");
-}
+async function init() {
+  const content = document.getElementById("content");
+  const id = new URLSearchParams(location.search).get("id");
+  const back = (msg) => {
+    showToast(msg, "warning");
+    setTimeout(() => { location.href = "scr-009.html"; }, 1500);
+  };
+  if (!id) return back("ไม่พบรหัสหน้าจอ");
 
-function toMillis(value) {
-  if (!value) return 0;
-  return typeof value.toDate === "function" ? value.toDate().getTime() : new Date(value).getTime();
-}
+  const screenRef = doc(db, "screens", id);
+  let screen = null;
+  let loadedUpdatedAt = null;
+  let selected = null;
 
-function refreshStepper(statusKey) {
-  const idx = statusOrder.indexOf(statusKey);
-  stepperSteps.forEach(function (step) {
-    const stepIdx = statusOrder.indexOf(step.getAttribute("data-status"));
-    step.classList.remove("is-passed", "is-current", "is-upcoming");
-    if (stepIdx < idx) step.classList.add("is-passed");
-    else if (stepIdx === idx) step.classList.add("is-current");
-    else step.classList.add("is-upcoming");
-  });
-}
-
-function selectStatus(newStatus) {
-  pendingStatus = newStatus;
-  statusButtons.forEach(function (b) {
-    b.classList.toggle("is-selected", b.getAttribute("data-status") === newStatus);
-  });
-  const currentIdx = statusOrder.indexOf(currentStatusHolder.getAttribute("data-status"));
-  const newIdx = statusOrder.indexOf(newStatus);
-  const isRegression = newIdx < currentIdx;
-  reasonField.hidden = !isRegression;
-  if (!isRegression) reasonInput.value = "";
-  reasonField.classList.remove("has-error");
-}
-
-async function loadHistory() {
-  const snapshot = await getDocs(collection(db, "screens", id, "statusHistory"));
-  const items = [];
-  snapshot.forEach(function (docSnap) { items.push(docSnap.data()); });
-  items.sort(function (a, b) { return toMillis(b.changed_at) - toMillis(a.changed_at); });
-  if (!items.length) {
-    historyList.innerHTML = '<li class="history-item">ยังไม่มีประวัติการเปลี่ยนสถานะ</li>';
-    return;
-  }
-  historyList.innerHTML = items.map(function (h) {
-    const noteHtml = h.note ? '<div class="history-reason">ผลความก้าวหน้า: ' + esc(h.note) + "</div>" : "";
-    const reasonHtml = h.reason ? '<div class="history-reason">เหตุผล: ' + esc(h.reason) + "</div>" : "";
-    return '<li class="history-item"><div class="history-meta">' + esc(window.formatDateTime(h.changed_at)) +
-      " — ระบบบันทึกอัตโนมัติ (changed_by: " + esc(h.changed_by_name) + ')</div><div class="history-change">' +
-      esc(statusLabel[h.old_status] || h.old_status) + " → " + esc(statusLabel[h.new_status] || h.new_status) +
-      "</div>" + noteHtml + reasonHtml + "</li>";
-  }).join("");
-}
-
-async function loadScreen() {
-  const snap = await getDoc(doc(db, "screens", id));
-  if (!snap.exists() || snap.data().is_deleted) {
-    window.showToast("ไม่พบหน้าจอนี้ — อาจถูกลบไปแล้ว กำลังพากลับไปหน้าทะเบียนหน้าจอ...", "danger");
-    setTimeout(function () { window.location.href = "scr-009.html"; }, 1500);
-    return;
-  }
-  const data = snap.data();
-  progressScreenLabel.textContent = (data.code || id) + " — " + data.name;
-  currentStatusHolder.setAttribute("data-status", data.current_status || "NotStarted");
-  currentStatusHolder.textContent = statusLabel[data.current_status] || data.current_status;
-  currentStatusHolder.className = "status-chip " + (statusClass[data.current_status] || "is-neutral");
-  updatedAtEl.textContent = window.formatDateTime(data.updated_at);
-  assigneesEl.innerHTML = renderAssignees(data.assignees);
-  refreshStepper(data.current_status || "NotStarted");
-  await loadHistory();
-}
-
-(async function init() {
-  if (!id) {
-    window.showToast("ไม่พบหน้าจอที่จะบันทึกความก้าวหน้า", "danger");
-    setTimeout(function () { window.location.href = "scr-009.html"; }, 1200);
-    return;
-  }
-  await window.AUTH_READY;
-  const role = window.CURRENT_USER.role;
-  const userId = window.CURRENT_USER.id;
-
-  const accessSnap = await getDoc(doc(db, "screens", id));
-  if (!accessSnap.exists() || accessSnap.data().is_deleted) {
-    window.showToast("ไม่พบหน้าจอนี้ — อาจถูกลบไปแล้ว กำลังพากลับไปหน้าทะเบียนหน้าจอ...", "danger");
-    setTimeout(function () { window.location.href = "scr-009.html"; }, 1500);
-    return;
-  }
-  if (!canRecordProgressFor(role, accessSnap.data(), userId)) {
-    denyAccessAndRedirect();
-    return;
+  async function loadScreen() {
+    const snap = await getDoc(screenRef);
+    if (!snap.exists() || snap.data().is_deleted === true) return null;
+    return { ...snap.data(), id: snap.id };
   }
 
-  await loadScreen();
+  async function loadHistory() {
+    const q = query(collection(db, "screens", id, "statusHistory"), orderBy("changed_at", "desc"));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+  }
 
-  statusButtons.forEach(function (btn) {
-    btn.addEventListener("click", function () { selectStatus(btn.getAttribute("data-status")); });
-  });
-
-  saveBtn.addEventListener("click", async function () {
-    if (pendingStatus === null) {
-      window.showToast("กรุณาเลือกสถานะที่จะเปลี่ยนก่อน", "danger");
-      return;
+  async function refresh() {
+    try {
+      screen = await loadScreen();
+      if (!screen) return back("ไม่พบหน้าจอ หรือถูกลบแล้ว");
+      loadedUpdatedAt = screen.updated_at ?? null;
+      const history = await loadHistory();
+      selected = null;
+      render(history);
+    } catch (err) {
+      console.error(err);
+      content.innerHTML = `<div class="info-banner danger">โหลดข้อมูลไม่สำเร็จ: ${esc(err.message || String(err))}</div>`;
     }
-    const ref = doc(db, "screens", id);
-    const snap = await getDoc(ref);
-    if (!snap.exists() || snap.data().is_deleted) {
-      window.showToast("บันทึกไม่สำเร็จ: ไม่พบหน้าจอนี้แล้ว (ถูกลบไปก่อนหน้านี้) กำลังพากลับไปหน้าทะเบียนหน้าจอ...", "danger");
-      setTimeout(function () { window.location.href = "scr-009.html"; }, 1500);
-      return;
-    }
-    const data = snap.data();
-    const currentStatus = data.current_status || "NotStarted";
-    if (pendingStatus === currentStatus) {
-      window.showToast("สถานะที่เลือกเหมือนกับสถานะปัจจุบันอยู่แล้ว", "danger");
-      return;
-    }
-    const isRegression = statusOrder.indexOf(pendingStatus) < statusOrder.indexOf(currentStatus);
-    if (isRegression && !reasonInput.value.trim()) {
-      reasonField.classList.add("has-error");
-      reasonInput.focus();
-      return;
-    }
+  }
 
-    const now = new Date().toISOString();
-    await addDoc(collection(db, "screens", id, "statusHistory"), {
-      changed_by: window.CURRENT_USER.id,
-      changed_by_name: window.CURRENT_USER.name,
-      changed_at: now,
-      old_status: currentStatus,
-      new_status: pendingStatus,
-      reason: isRegression ? reasonInput.value.trim() : null,
-      note: noteInput.value.trim() || null
+  function render(history) {
+    const editable = canRecordProgressFor(me.role, screen, me.user_id);
+    const cur = screen.current_status || "NotStarted";
+    const chips = (screen.assignees || []).map((a) =>
+      `<span class="assignee-chip">${esc(a.user_name || "")} <span class="assignee-role">${esc(a.role || "")}</span></span>`).join(" ") || `<span class="muted">ยังไม่มีผู้รับผิดชอบ</span>`;
+
+    const curIdx = STATUSES.indexOf(cur);
+    const steps = STATUSES.map((s, i) => {
+      const cls = s === cur ? "current" : i < curIdx ? "done" : "upcoming";
+      return `<div class="step ${cls}" data-status="${s}" ${editable ? `role="button" tabindex="0" style="cursor:pointer"` : ""}>
+        <div class="step-dot">${i + 1}</div><div class="step-label">${esc(STATUS_LABEL[s])}</div></div>`;
+    }).join("");
+
+    content.innerHTML = `
+      <div class="card stack">
+        <div class="card-title">ข้อมูลหน้าจอ</div>
+        <div class="grid-2">
+          <div class="kv"><div class="kv-label">รหัส</div><div class="kv-value"><span class="code-label">${esc(screen.code || "")}</span></div></div>
+          <div class="kv"><div class="kv-label">ชื่อหน้าจอ</div><div class="kv-value">${esc(screen.name || "")}</div></div>
+          <div class="kv"><div class="kv-label">ประเภท</div><div class="kv-value">${esc(screen.type?.label || "—")}</div></div>
+          <div class="kv"><div class="kv-label">สถานะปัจจุบัน</div><div class="kv-value">${statusPill(cur)}</div></div>
+        </div>
+        <div class="kv"><div class="kv-label">ผู้รับผิดชอบ</div><div class="kv-value">${chips}</div></div>
+      </div>
+
+      <div class="card stack" style="margin-top:16px">
+        <div class="card-title">เปลี่ยนสถานะ</div>
+        ${editable ? "" : `<div class="info-banner warning">บันทึกได้เฉพาะผู้ถูกมอบหมาย</div>`}
+        <div class="stepper" id="stepper">${steps}</div>
+        ${editable ? `
+        <form id="progress-form" novalidate class="stack">
+          <div class="field" id="reason-field">
+            <label for="reason">เหตุผล <span class="required hidden" id="reason-req">*</span></label>
+            <textarea id="reason" rows="2" maxlength="500" placeholder="ระบุเหตุผลเมื่อย้อนสถานะกลับ"></textarea>
+            <div class="field-hint">จำเป็นเมื่อเลือกสถานะที่ย้อนกลับจากสถานะปัจจุบัน</div>
+            <div class="field-error" id="reason-error"></div>
+          </div>
+          <div class="field">
+            <label for="note">หมายเหตุ (ไม่บังคับ)</label>
+            <textarea id="note" rows="2" maxlength="500"></textarea>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" id="btn-save" disabled>บันทึก</button>
+          </div>
+        </form>` : ""}
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-title">ประวัติการเปลี่ยนสถานะ</div>
+        ${history.length ? `<div class="timeline">${history.map((h) => `
+          <div class="timeline-item"><div class="timeline-dot"></div><div class="timeline-body">
+            <div class="timeline-head">${statusPill(h.old_status || "NotStarted")} → ${statusPill(h.new_status || "NotStarted")}</div>
+            <div class="timeline-meta">${esc(h.changed_by_name || h.changed_by || "")} · ${esc(formatDateTime(h.changed_at))}</div>
+            ${h.reason ? `<div class="timeline-note"><strong>เหตุผล:</strong> ${esc(h.reason)}</div>` : ""}
+            ${h.note ? `<div class="timeline-note"><strong>หมายเหตุ:</strong> ${esc(h.note)}</div>` : ""}
+          </div></div>`).join("")}</div>`
+          : `<div class="empty-state"><div class="empty-title">ยังไม่มีประวัติการเปลี่ยนสถานะ</div></div>`}
+      </div>`;
+
+    if (editable) bindForm(cur);
+  }
+
+  function bindForm(cur) {
+    const stepper = document.getElementById("stepper");
+    const form = document.getElementById("progress-form");
+    const saveBtn = document.getElementById("btn-save");
+    const reason = document.getElementById("reason");
+    const note = document.getElementById("note");
+    const field = document.getElementById("reason-field");
+    const errEl = document.getElementById("reason-error");
+    const reqMark = document.getElementById("reason-req");
+
+    const isBack = () => selected && STATUSES.indexOf(selected) < STATUSES.indexOf(cur);
+    function sync() {
+      saveBtn.disabled = !selected || selected === cur;
+      reqMark.classList.toggle("hidden", !isBack());
+      if (!isBack()) { field.classList.remove("has-error"); errEl.textContent = ""; }
+      stepper.querySelectorAll(".step").forEach((el) => {
+        const chosen = el.dataset.status === selected && selected !== cur;
+        el.style.outline = chosen ? "2px solid currentColor" : "";
+        el.style.outlineOffset = chosen ? "2px" : "";
+        el.style.borderRadius = "8px";
+      });
+    }
+    const pick = (el) => {
+      const s = el?.closest(".step")?.dataset.status;
+      if (!s) return;
+      selected = s;
+      sync();
+    };
+    stepper.addEventListener("click", (e) => pick(e.target));
+    stepper.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(e.target); }
     });
-    await updateDoc(ref, { current_status: pendingStatus, updated_at: now });
+    reason.addEventListener("input", () => {
+      if (reason.value.trim()) { field.classList.remove("has-error"); errEl.textContent = ""; }
+    });
 
-    window.showToast("บันทึกความก้าวหน้าสำเร็จ: เปลี่ยนสถานะเป็น " + statusLabel[pendingStatus]);
-    noteInput.value = "";
-    reasonInput.value = "";
-    reasonField.hidden = true;
-    reasonField.classList.remove("has-error");
-    pendingStatus = null;
-    statusButtons.forEach(function (b) { b.classList.remove("is-selected"); });
-    await loadScreen();
-  });
-})();
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!selected || selected === cur) return;
+      const reasonVal = reason.value.trim();
+      if (isBack() && !reasonVal) {
+        field.classList.add("has-error");
+        errEl.textContent = "กรุณาระบุเหตุผลเมื่อย้อนสถานะ";
+        reason.focus();
+        return;
+      }
+      saveBtn.disabled = true;
+      saveBtn.textContent = "กำลังบันทึก...";
+      try {
+        const fresh = await getDoc(screenRef);
+        if (!fresh.exists() || fresh.data().is_deleted === true) return back("หน้าจอนี้ถูกลบแล้ว");
+        if ((fresh.data().updated_at ?? null) !== loadedUpdatedAt) {
+          showToast("ข้อมูลถูกแก้ไขโดยผู้อื่นแล้ว กำลังโหลดใหม่", "warning");
+          await refresh();
+          return;
+        }
+        const now = nowIso();
+        const histRef = doc(collection(db, "screens", id, "statusHistory"));
+        const batch = writeBatch(db);
+        batch.set(histRef, {
+          changed_by: me.user_id,
+          changed_by_name: me.name,
+          changed_at: now,
+          old_status: fresh.data().current_status || "NotStarted",
+          new_status: selected,
+          reason: reasonVal || null,
+          note: note.value.trim() || null,
+        });
+        batch.update(screenRef, { current_status: selected, updated_at: now });
+        await batch.commit();
+        showToast("บันทึกความก้าวหน้าเรียบร้อย", "success");
+        await refresh();
+      } catch (err) {
+        console.error(err);
+        showToast("บันทึกไม่สำเร็จ: " + (err.message || err), "danger");
+        saveBtn.textContent = "บันทึก";
+        sync();
+      }
+    });
+    sync();
+  }
+
+  await refresh();
+}

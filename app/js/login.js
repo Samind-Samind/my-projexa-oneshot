@@ -1,52 +1,44 @@
-// ─────────────────────────────────────────────────────────────
-// js/login.js — หน้าเข้าสู่ระบบ (login.html)
-// ─────────────────────────────────────────────────────────────
+// js/login.js — หน้าเข้าสู่ระบบ
+import { auth } from "./firebase-config.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+import { signIn, authErrorMessage } from "./auth.js";
+import { showToast } from "./common.js";
 
-import { login, mapAuthError } from "./auth.js";
-
-if (new URLSearchParams(window.location.search).get("error") === "account-not-linked") {
-  document.getElementById("account-not-linked-note").hidden = false;
-}
-
+const HOME = "scr-009.html";
 const form = document.getElementById("login-form");
-const emailField = document.getElementById("email-field");
-const emailInput = document.getElementById("email-input");
-const passwordField = document.getElementById("password-field");
-const passwordInput = document.getElementById("password-input");
-const submitBtn = document.getElementById("login-submit-btn");
+const errBox = document.getElementById("form-error");
+const btn = document.getElementById("btn-login");
+let busy = false;
 
-function setFieldError(fieldEl, hasError) {
-  fieldEl.classList.toggle("has-error", hasError);
-}
+try {
+  const msg = sessionStorage.getItem("loginToast");
+  if (msg) { sessionStorage.removeItem("loginToast"); showToast(msg, "warning"); }
+} catch (e) { /* ignore */ }
 
-function showFormError(message) {
-  var existing = document.getElementById("login-form-error");
-  if (existing) existing.remove();
-  var p = document.createElement("p");
-  p.id = "login-form-error";
-  p.className = "field-error";
-  p.style.display = "block";
-  p.style.marginTop = "8px";
-  p.textContent = message;
-  form.appendChild(p);
-}
+// ถ้าล็อกอินอยู่แล้ว ข้ามไปหน้าทะเบียน
+onAuthStateChanged(auth, (user) => { if (user && !busy) location.href = HOME; });
 
-form.addEventListener("submit", async function (e) {
+form.addEventListener("submit", async (e) => {
   e.preventDefault();
-  const email = emailInput.value.trim();
-  const password = passwordInput.value;
-
-  setFieldError(emailField, !email);
-  setFieldError(passwordField, !password);
-  if (!email || !password) return;
-
-  submitBtn.disabled = true;
+  errBox.hidden = true;
+  const email = form.email.value.trim();
+  const pw = form.password.value;
+  if (!email || !pw) {
+    errBox.textContent = "กรุณากรอกอีเมลและรหัสผ่าน";
+    errBox.hidden = false;
+    return;
+  }
+  busy = true;
+  btn.disabled = true;
+  btn.textContent = "กำลังเข้าสู่ระบบ...";
   try {
-    await login(email, password);
-    window.location.href = "scr-009.html";
+    await signIn(email, pw);
+    location.href = HOME;
   } catch (err) {
-    showFormError(mapAuthError(err));
-  } finally {
-    submitBtn.disabled = false;
+    busy = false;
+    errBox.textContent = authErrorMessage(err);
+    errBox.hidden = false;
+    btn.disabled = false;
+    btn.textContent = "เข้าสู่ระบบ";
   }
 });

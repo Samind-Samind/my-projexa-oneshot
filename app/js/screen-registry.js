@@ -1,163 +1,140 @@
-// ─────────────────────────────────────────────────────────────
-// js/screen-registry.js — SCR-009 ทะเบียนหน้าจอ
-// อ่านจริงจาก collection "screens" บน Firestore + filter ฝั่ง client
-// ─────────────────────────────────────────────────────────────
-
-import { db } from "./firebase-config.js";
+// SCR-009 ทะเบียนหน้าจอ
+import { requireAuth, renderShell, showToast, formatDateTime, esc, STATUSES, STATUS_LABEL, statusPill } from "./common.js";
 import {
-  collection,
-  getDocs
-} from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
-import { canManageRegistry, canAssign, canRecordProgressFor, filterScreensForRole } from "./acl.js";
+  PAGE, canAccessPage, canManageRegistry, canAssign, canAssignFor,
+  canRecordProgressFor, isRegistryScoped, filterScreensForRole, denyAccessAndRedirect,
+} from "./acl.js";
+import { db } from "./firebase-config.js";
+import { collection, getDocs } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
-const STATUS_LABEL = { NotStarted: "Not Started", Analysis: "Analysis", Design: "Design" };
-const STATUS_CLASS = { NotStarted: "is-neutral", Analysis: "is-current", Design: "is-current" };
+const me = await requireAuth();
+renderShell(PAGE.SCR009);
 
-function avatarInitial(name) {
-  return (name || "").trim().slice(0, 2) || "?";
+if (!canAccessPage(me.role, PAGE.SCR009)) {
+  denyAccessAndRedirect();
+} else {
+  init();
 }
 
-function renderAssignees(assignees) {
-  if (!assignees || !assignees.length) {
-    return '<span class="avatar-row"><span class="avatar-empty">— ยังไม่มอบหมาย —</span></span>';
-  }
-  return assignees.map(function (a) {
-    const reasonAttr = a.ai_reason ? ' title="AI แนะนำ: ' + esc(a.ai_reason) + '"' : "";
-    return '<span class="avatar-row"><span class="avatar">' + esc(avatarInitial(a.user_name)) +
-      '</span><span' + reasonAttr + '>' + esc(a.user_name) + ' (' + esc(a.role) + ')' + (a.ai_reason ? " ⓘ" : "") + '</span></span>';
-  }).join("<br>");
-}
+async function init() {
+  const $ = (id) => document.getElementById(id);
+  const listArea = $("list-area");
+  const canAdd = canManageRegistry(me.role);
+  const canBulk = canAssign(me.role);
+  let all = [];
+  const selected = new Set();
 
-(async function () {
-  const body = document.getElementById("screen-registry-body");
-  const tableWrap = document.getElementById("registry-table-wrap");
-  const noResultState = document.getElementById("no-result-state");
-  const registryBodyWrap = document.getElementById("registry-body-wrap");
-  const collectionEmptyState = document.getElementById("collection-empty-state");
-  const typeFilter = document.getElementById("filter-type");
-  const statusFilter = document.getElementById("filter-status");
+  if (canAdd) $("btn-add").classList.remove("hidden");
+  if (canBulk) $("btn-assign-selected").classList.remove("hidden");
 
-  await window.AUTH_READY;
-  const role = window.CURRENT_USER.role;
-  const userId = window.CURRENT_USER.id;
-
-  const createLink = document.getElementById("create-screen-link");
-  const createLinkEmpty = document.getElementById("create-screen-link-empty");
-  if (!canManageRegistry(role)) {
-    createLink.hidden = true;
-    createLinkEmpty.hidden = true;
+  if (isRegistryScoped(me.role)) {
+    const b = $("scope-banner");
+    b.textContent = "คุณเห็นเฉพาะหน้าจอที่ถูกมอบหมายให้คุณเท่านั้น";
+    b.classList.remove("hidden");
+  } else if (me.role === "PM") {
+    const b = $("scope-banner");
+    b.textContent = "บทบาท PM: ดูข้อมูลได้อย่างเดียว";
+    b.classList.remove("hidden");
   }
 
-  let screens = [];
+  const statusSel = $("f-status");
+  STATUSES.forEach((s) => statusSel.insertAdjacentHTML("beforeend", `<option value="${esc(s)}">${esc(STATUS_LABEL[s])}</option>`));
+
   try {
-    const snapshot = await getDocs(collection(db, "screens"));
-    snapshot.forEach(function (docSnap) {
-      const data = docSnap.data();
-      if (data.is_deleted) return;
-      screens.push(Object.assign({}, data, { id: docSnap.id }));
-    });
+    const [scrSnap, typeSnap] = await Promise.all([
+      getDocs(collection(db, "screens")),
+      getDocs(collection(db, "screenTypes")),
+    ]);
+    all = scrSnap.docs
+      .map((d) => ({ ...d.data(), id: d.id }))
+      .filter((s) => s.is_deleted !== true);
+    all = filterScreensForRole(all, me.role, me.user_id);
+    all.sort((a, b) => String(a.code || "").localeCompare(String(b.code || ""), "th", { numeric: true }));
+    const typeSel = $("f-type");
+    typeSnap.docs
+      .map((d) => d.data())
+      .filter((t) => t.is_active !== false)
+      .forEach((t) => typeSel.insertAdjacentHTML("beforeend", `<option value="${esc(t.code)}">${esc(t.label)}</option>`));
   } catch (err) {
-    body.innerHTML = '<tr><td colspan="7" class="loading-note">อ่านข้อมูลจาก Firestore ไม่สำเร็จ: ' + esc(err.message) + "</td></tr>";
+    console.error(err);
+    listArea.innerHTML = `<div class="empty-state"><div class="empty-title">โหลดข้อมูลไม่สำเร็จ</div><div>${esc(err.message || String(err))}</div></div>`;
+    showToast("โหลดทะเบียนหน้าจอไม่สำเร็จ", "danger");
     return;
   }
 
-  if (screens.length === 0) {
-    registryBodyWrap.hidden = true;
-    collectionEmptyState.hidden = false;
-    return;
-  }
-
-  // จำกัดขอบเขตการมองเห็นตาม role (DEV/IMP เห็นเฉพาะหน้าจอที่ตนถูกมอบหมาย —
-  // ดู ACL.md หมายเหตุ 1 / app/js/acl.js)
-  screens = filterScreensForRole(screens, role, userId);
-
-  // เรียงหน้าจอที่บันทึกสร้างล่าสุดไว้เป็นรายการแรกเสมอ (หน้าจอเก่าที่ยังไม่มี
-  // created_at จะถูกจัดไว้ท้ายรายการ)
-  screens.sort(function (a, b) {
-    const ad = a.created_at || "";
-    const bd = b.created_at || "";
-    if (ad === bd) return 0;
-    return ad < bd ? 1 : -1;
-  });
-
-  function renderRows() {
-    const typeVal = typeFilter.value;
-    const statusVal = statusFilter.value;
-    const filtered = screens.filter(function (s) {
-      return (!typeVal || (s.type && s.type.type_id) === typeVal) && (!statusVal || s.current_status === statusVal);
+  function filtered() {
+    const q = $("f-search").value.trim().toLowerCase();
+    const t = $("f-type").value;
+    const st = $("f-status").value;
+    return all.filter((s) => {
+      if (q && !(`${s.code || ""} ${s.name || ""}`.toLowerCase().includes(q))) return false;
+      if (t && s.type?.type_id !== t) return false;
+      if (st && s.current_status !== st) return false;
+      return true;
     });
+  }
 
-    if (filtered.length === 0) {
-      tableWrap.hidden = true;
-      noResultState.hidden = false;
-      body.innerHTML = "";
-      updateSelection();
+  const selectable = (s) => canBulk && canAssignFor(me.role, s, me.user_id);
+
+  function updateSelUi() {
+    $("sel-count").textContent = selected.size;
+    $("btn-assign-selected").disabled = selected.size === 0;
+  }
+
+  function render() {
+    const rows = filtered();
+    const visibleIds = new Set(rows.map((r) => r.id));
+    [...selected].forEach((id) => { if (!visibleIds.has(id)) selected.delete(id); });
+
+    if (!rows.length) {
+      listArea.innerHTML = `<div class="empty-state"><div class="empty-title">ไม่พบหน้าจอ</div><div class="muted">${all.length ? "ลองปรับตัวกรองหรือคำค้นหา" : "ยังไม่มีหน้าจอในทะเบียน"}</div></div>`;
+      $("list-footer").textContent = `แสดง 0 จาก ${all.length} รายการ`;
+      updateSelUi();
       return;
     }
-    tableWrap.hidden = false;
-    noResultState.hidden = true;
-
-    body.innerHTML = filtered.map(function (s) {
-      const statusKey = s.current_status || "NotStarted";
-      const checkboxCell = canAssign(role) ? '<td><input type="checkbox" class="screen-row-check" value="' + esc(s.id) + '"></td>' : "";
-      const editLink = canManageRegistry(role) ? '<a class="btn-link" href="scr-010?screen=' + encodeURIComponent(s.id) + '">แก้ไข</a>' : "";
-      const progressLink = canRecordProgressFor(role, s, userId) ? '<a class="btn-link" href="scr-016?screen=' + encodeURIComponent(s.id) + '">บันทึกความก้าวหน้า</a>' : "";
-      const actionsCell = [editLink, progressLink].filter(Boolean).join(" · ") || "—";
-      return '<tr data-type="' + esc((s.type && s.type.type_id) || "") + '" data-status="' + esc(statusKey) + '">' +
-        checkboxCell +
-        '<td style="font-family: var(--font-mono);">' + esc(s.code || s.id) + "</td>" +
-        "<td>" + esc(s.name) + "</td>" +
-        '<td><span class="tag">' + esc((s.type && s.type.label) || "-") + "</span></td>" +
-        '<td><span class="status-chip ' + STATUS_CLASS[statusKey] + '">' + esc(STATUS_LABEL[statusKey] || statusKey) + "</span></td>" +
-        "<td>" + renderAssignees(s.assignees) + "</td>" +
-        "<td>" + actionsCell + "</td>" +
-        "</tr>";
+    const selRows = rows.filter(selectable);
+    const showChecks = canBulk;
+    const allChecked = selRows.length > 0 && selRows.every((r) => selected.has(r.id));
+    const head = `<tr>${showChecks ? `<th class="col-check"><input type="checkbox" id="chk-all" ${allChecked ? "checked" : ""} ${selRows.length ? "" : "disabled"} aria-label="เลือกทั้งหมด"></th>` : ""}
+      <th>รหัส</th><th>ชื่อหน้าจอ</th><th>ประเภท</th><th>ผู้รับผิดชอบ</th><th>สถานะ</th><th>อัปเดตล่าสุด</th><th>การดำเนินการ</th></tr>`;
+    const body = rows.map((s) => {
+      const chips = (s.assignees || []).map((a) =>
+        `<span class="assignee-chip">${esc(a.user_name || "")} <span class="assignee-role">${esc(a.role || "")}</span></span>`).join(" ") || `<span class="muted">—</span>`;
+      const acts = [];
+      if (canManageRegistry(me.role)) acts.push(`<a class="btn btn-ghost btn-sm" href="scr-010.html?id=${encodeURIComponent(s.id)}">แก้ไข</a>`);
+      if (canRecordProgressFor(me.role, s, me.user_id)) acts.push(`<a class="btn btn-ghost btn-sm" href="scr-016.html?id=${encodeURIComponent(s.id)}">บันทึกความก้าวหน้า</a>`);
+      if (canAssignFor(me.role, s, me.user_id)) acts.push(`<a class="btn btn-ghost btn-sm" href="scr-013.html?ids=${encodeURIComponent(s.id)}">มอบหมาย</a>`);
+      const chk = showChecks
+        ? `<td class="col-check">${selectable(s) ? `<input type="checkbox" class="row-chk" data-id="${esc(s.id)}" ${selected.has(s.id) ? "checked" : ""} aria-label="เลือก ${esc(s.code)}">` : ""}</td>` : "";
+      return `<tr class="${selected.has(s.id) ? "selected" : ""}">${chk}
+        <td><span class="code-label">${esc(s.code || "")}</span></td>
+        <td>${esc(s.name || "")}</td>
+        <td>${esc(s.type?.label || "—")}</td>
+        <td>${chips}</td>
+        <td>${statusPill(s.current_status || "NotStarted")}</td>
+        <td>${esc(formatDateTime(s.updated_at))}</td>
+        <td><div class="row">${acts.join("") || `<span class="muted">—</span>`}</div></td></tr>`;
     }).join("");
-
-    document.querySelectorAll(".screen-row-check").forEach(function (box) {
-      box.addEventListener("change", updateSelection);
-    });
-    updateSelection();
+    listArea.innerHTML = `<div class="table-wrap"><table class="table"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+    $("list-footer").textContent = `แสดง ${rows.length} จาก ${all.length} รายการ`;
+    updateSelUi();
   }
 
-  const selectAllBox = document.getElementById("select-all-screens");
-  const selectedCountEl = document.getElementById("selected-count-value");
-  const batchAssignLink = document.getElementById("batch-assign-link");
-
-  if (!canAssign(role)) {
-    document.querySelector("th.select-col").hidden = true;
-    document.querySelector(".selected-count").hidden = true;
-    batchAssignLink.hidden = true;
-  }
-
-  function updateSelection() {
-    const checked = Array.from(document.querySelectorAll(".screen-row-check")).filter(function (c) { return c.checked; });
-    selectedCountEl.textContent = checked.length;
-    if (checked.length === 0) {
-      batchAssignLink.style.pointerEvents = "none";
-      batchAssignLink.style.opacity = ".45";
-    } else {
-      const ids = checked.map(function (c) { return c.value; }).join(",");
-      batchAssignLink.href = "scr-013?ids=" + encodeURIComponent(ids);
-      batchAssignLink.style.pointerEvents = "";
-      batchAssignLink.style.opacity = "";
+  listArea.addEventListener("change", (e) => {
+    const t = e.target;
+    if (t.id === "chk-all") {
+      filtered().filter(selectable).forEach((r) => (t.checked ? selected.add(r.id) : selected.delete(r.id)));
+      render();
+    } else if (t.classList.contains("row-chk")) {
+      if (t.checked) selected.add(t.dataset.id); else selected.delete(t.dataset.id);
+      render();
     }
-  }
-
-  selectAllBox.addEventListener("change", function () {
-    document.querySelectorAll(".screen-row-check").forEach(function (c) { c.checked = selectAllBox.checked; });
-    updateSelection();
+  });
+  ["f-search", "f-type", "f-status"].forEach((id) => $(id).addEventListener("input", render));
+  $("btn-assign-selected").addEventListener("click", () => {
+    if (!selected.size) return showToast("กรุณาเลือกหน้าจออย่างน้อย 1 รายการ", "warning");
+    location.href = `scr-013.html?ids=${[...selected].map(encodeURIComponent).join(",")}`;
   });
 
-  typeFilter.addEventListener("change", renderRows);
-  statusFilter.addEventListener("change", renderRows);
-  document.querySelectorAll(".clear-filter-btn").forEach(function (btn) {
-    btn.addEventListener("click", function () {
-      typeFilter.value = "";
-      statusFilter.value = "";
-      renderRows();
-    });
-  });
-
-  renderRows();
-})();
+  render();
+}

@@ -1,92 +1,57 @@
-<!DOCTYPE html>
-<html lang="th">
-<head>
-<meta charset="UTF-8">
-<title>SCR-010 รายละเอียดหน้าจอ — Projexa</title>
-<link rel="stylesheet" href="css/style.css">
-<script type="module" src="js/common.js"></script>
-</head>
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SCR-010 รายละเอียดหน้าจอ — Projexa</title><link rel="stylesheet" href="css/style.css"></head>
 <body>
 <div class="layout">
-  <nav class="sidebar">
-    <div class="sidebar-group">
-      <img src="assets/logo-full-new.png" alt="Projexa" class="sidebar-logo">
-    </div>
-    <div class="sidebar-group">
-      <a class="sidebar-item" href="scr-009.html" data-acl-page="registry">SCR-009 ทะเบียนหน้าจอ</a>
-      <a class="sidebar-item active" href="scr-010.html" data-acl-page="detailCreate">SCR-010 รายละเอียดหน้าจอ</a>
-      <a class="sidebar-item" href="scr-013.html" data-acl-page="assign">SCR-013 มอบหมายผู้รับผิดชอบ</a>
-      <a class="sidebar-item" href="scr-016.html" data-acl-page="progress">SCR-016 บันทึกความก้าวหน้า</a>
-    </div>
-    <div id="current-user-bar" class="sidebar-user-group"></div>
-  </nav>
-  <main class="content">
-    <div class="breadcrumb"><a href="scr-009.html">Screen Tracking</a><span class="sep">/</span>รายละเอียดหน้าจอ</div>
-    <div class="page-header"><h1 id="detail-mode-heading">สร้างหน้าจอใหม่</h1></div>
-
-    <div class="card">
-      <h2>ข้อมูลหน้าจอ</h2>
-      <div class="field" id="code-field">
-        <label for="screen-code-input">รหัสหน้าจอ *</label>
-        <input type="text" id="screen-code-input" placeholder="เช่น SCR-010">
-        <p class="field-error">กรุณากรอกรหัสหน้าจอก่อนบันทึก</p>
+  <aside id="sidebar"></aside>
+  <main class="main">
+    <div class="breadcrumb"><a href="scr-009.html">ทะเบียนหน้าจอ</a> / <span id="crumb">รายละเอียดหน้าจอ</span></div>
+    <div class="page-header">
+      <div>
+        <h1 class="page-title" id="page-title">รายละเอียดหน้าจอ</h1>
+        <div class="page-sub" id="page-sub">SCR-010</div>
       </div>
-      <div class="field" id="name-field">
-        <label for="screen-name-input">ชื่อหน้าจอ *</label>
-        <input type="text" id="screen-name-input" placeholder="เช่น หน้าจอค้นหาและแสดงรายการใบลา">
-        <p class="field-error">กรุณากรอกชื่อหน้าจอก่อนบันทึก</p>
+      <div class="page-actions" id="header-actions"></div>
+    </div>
+
+    <div id="loading" class="loading-box"><span class="spinner spinner-lg"></span></div>
+
+    <form id="screen-form" class="card stack hidden" novalidate>
+      <div class="grid-2">
+        <div class="field" id="f-code">
+          <label for="code">รหัสหน้าจอ <span class="required">*</span></label>
+          <input id="code" type="text" placeholder="เช่น SCR-101" autocomplete="off">
+          <div class="field-error"></div>
+        </div>
+        <div class="field" id="f-name">
+          <label for="name">ชื่อหน้าจอ <span class="required">*</span></label>
+          <input id="name" type="text" autocomplete="off">
+          <div class="field-error"></div>
+        </div>
       </div>
       <div class="field">
-        <label for="screen-desc-input">คำอธิบาย</label>
-        <textarea id="screen-desc-input" rows="3" placeholder="อธิบายหน้าที่การทำงานของหน้าจอนี้โดยย่อ — ระบบจะใช้ข้อความนี้ร่วมกับชื่อหน้าจอเป็น input ให้ AI ช่วยแนะนำประเภท"></textarea>
+        <label for="description">คำอธิบาย</label>
+        <textarea id="description" rows="4" placeholder="อธิบายหน้าที่ของหน้าจอ (ใช้เป็นข้อมูลให้ AI แนะนำประเภท)"></textarea>
       </div>
-
       <div class="field">
-        <button type="button" class="btn btn-secondary" id="ai-suggest-btn">ให้ AI ช่วยแนะนำประเภท</button>
+        <label for="type">ประเภทหน้าจอ</label>
+        <div class="row">
+          <select id="type"><option value="">— เลือกประเภท —</option></select>
+          <button type="button" class="btn btn-secondary" id="btn-ai">ให้ AI ช่วยแนะนำประเภท</button>
+          <span class="spinner hidden" id="ai-spinner"></span>
+        </div>
+        <div class="field-hint" id="type-hint"></div>
       </div>
-
-      <p id="ai-waiting" class="note" hidden>AI กำลังวิเคราะห์ชื่อและคำอธิบายหน้าจอ...</p>
-
-      <div id="ai-type-block" class="ai-block" hidden>
-        <p style="margin:0 0 var(--sp-2);">AI วิเคราะห์แล้วแนะนำประเภท: <strong id="ai-suggested-label">Inquiry</strong> (ai_confidence: <span id="ai-suggested-confidence-label">82%</span>)</p>
-        <p class="note" style="margin:0 0 var(--sp-3);">กรุณาตรวจสอบก่อนยืนยัน (is_suggested = true จนกว่าจะกดยืนยัน)</p>
-        <button type="button" class="btn btn-primary" id="ai-confirm-btn">ยืนยันประเภทนี้</button>
-        <button type="button" class="btn btn-secondary" id="ai-dismiss-btn">เลือกประเภทเองแทน</button>
+      <div id="ai-area"></div>
+      <div id="meta-area" class="kv-list"></div>
+      <div class="form-error hidden" id="form-error"></div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-primary" id="btn-save">บันทึก</button>
+        <a class="btn btn-secondary" href="scr-009.html">ยกเลิก</a>
       </div>
-
-      <p id="ai-timeout-msg" class="note" hidden>AI แนะนำไม่สำเร็จ — ไม่เป็นไร กรุณาเลือกประเภทได้จากรายการด้านล่างเองได้ทันที</p>
-
-      <div class="field">
-        <label for="screen-type-select">ประเภทหน้าจอ *</label>
-        <select id="screen-type-select"><option value="">กำลังโหลดประเภท…</option></select>
-      </div>
-
-      <p class="note" id="concurrency-note" hidden>
-        เอกสารนี้อาจถูกแก้ไขโดยผู้ใช้อื่นระหว่างที่คุณเปิดหน้านี้ค้างไว้ — กด
-        <button type="button" id="reload-latest-btn" class="btn-link">โหลดข้อมูลล่าสุด</button> ก่อนบันทึกซ้ำ
-      </p>
-
-      <div class="form-actions" style="margin-top: var(--sp-4); display:flex; gap: var(--sp-3);">
-        <button type="button" class="btn btn-primary" id="save-screen-btn">บันทึก</button>
-        <a class="btn btn-secondary" id="link-to-assign" href="#" style="pointer-events:none; opacity:.45;">ไปหน้ามอบหมายผู้รับผิดชอบ</a>
-        <a class="btn btn-secondary" id="link-to-progress" href="#" style="pointer-events:none; opacity:.45;">ไปหน้าบันทึกความก้าวหน้า</a>
-        <button type="button" class="btn btn-danger" id="delete-screen-btn" style="margin-left:auto;" hidden>ลบหน้าจอ</button>
-      </div>
-    </div>
+    </form>
   </main>
 </div>
-
-<div class="modal-overlay" id="delete-modal-overlay" hidden>
-  <div class="modal">
-    <h3>ยืนยันการลบหน้าจอ</h3>
-    <p id="delete-modal-message" class="note"></p>
-    <div class="modal-actions">
-      <button type="button" class="btn btn-secondary" id="delete-cancel-btn">ยกเลิก</button>
-      <button type="button" class="btn btn-danger" id="delete-confirm-btn">ยืนยันลบ</button>
-    </div>
-  </div>
-</div>
-
+<div id="toast-root"></div>
 <script type="module" src="js/screen-detail.js"></script>
-</body>
-</html>
+</body></html>

@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "projexa-b3a6a"
+    "default": "projexa-b3a6a",
+    "new": "projexa-oneshot"
   }
 }

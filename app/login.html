@@ -1,39 +1,32 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="th">
 <head>
-<meta charset="UTF-8">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>เข้าสู่ระบบ — Projexa</title>
+<link rel="icon" href="assets/logo-icon.png">
 <link rel="stylesheet" href="css/style.css">
 </head>
-<body>
-<div class="auth-shell">
-  <div class="auth-card card">
-    <img src="assets/logo-full-new.png" alt="Projexa" class="auth-logo">
-    <p class="page-sub">เข้าสู่ระบบด้วยอีเมลและรหัสผ่าน</p>
-
-    <div id="account-not-linked-note" class="note" hidden>บัญชีนี้ล็อกอินสำเร็จ แต่ยังไม่ผูกกับผู้ใช้ในระบบ กรุณาติดต่อผู้ดูแลระบบ</div>
-
-    <form id="login-form">
-      <div class="field" id="email-field">
-        <label for="email-input">อีเมล</label>
-        <input type="email" id="email-input" autocomplete="username" required>
-        <div class="field-error">กรุณากรอกอีเมล</div>
-      </div>
-      <div class="field" id="password-field">
-        <label for="password-input">รหัสผ่าน</label>
-        <input type="password" id="password-input" autocomplete="current-password" required>
-        <div class="field-error">กรุณากรอกรหัสผ่าน</div>
-      </div>
-
-      <div class="btn-row">
-        <button type="submit" id="login-submit-btn" class="btn btn-primary" style="width:100%; justify-content:center;">เข้าสู่ระบบ</button>
-      </div>
-    </form>
-
-    <p class="auth-links">ยังไม่มีบัญชี? <a href="signup.html">สมัครสมาชิก</a></p>
-  </div>
-</div>
-
+<body class="auth-body">
+<main class="auth-card">
+  <img class="auth-logo" src="assets/logo-full.png" alt="Projexa">
+  <h1 class="auth-title">เข้าสู่ระบบ</h1>
+  <p class="auth-sub">ระบบติดตามสถานะหน้าจอ (Screen Tracking)</p>
+  <form id="login-form" novalidate>
+    <div class="field">
+      <label for="email">อีเมล <span class="required">*</span></label>
+      <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com">
+    </div>
+    <div class="field">
+      <label for="password">รหัสผ่าน <span class="required">*</span></label>
+      <input id="password" name="password" type="password" autocomplete="current-password">
+    </div>
+    <div id="form-error" class="field-error form-error" role="alert" hidden></div>
+    <button type="submit" id="btn-login" class="btn btn-primary btn-block">เข้าสู่ระบบ</button>
+  </form>
+  <p class="auth-foot">ยังไม่มีบัญชี? <a href="signup.html">สมัครสมาชิก</a></p>
+</main>
+<div id="toast-root"></div>
 <script type="module" src="js/login.js"></script>
 </body>
 </html>

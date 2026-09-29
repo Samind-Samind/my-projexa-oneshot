@@ -1,69 +1,51 @@
-// ─────────────────────────────────────────────────────────────
-// js/acl.js — สิทธิ์การเข้าถึงตามบทบาทผู้ใช้ (client-side UI gating เท่านั้น)
-// mirror ตาราง/หมายเหตุใน ACL.md (root ของ repo) 1:1 — ถ้ากฎใน ACL.md
-// เปลี่ยน ให้แก้ที่ไฟล์นี้ที่เดียว ไม่ใช่ security enforcement จริง
-// (firestore.rules ยังคงแค่ request.auth != null ตาม SCOPE.md)
-// ─────────────────────────────────────────────────────────────
+// js/acl.js — สิทธิ์ตามบทบาท (client-side UI gating ตาม ACL.md; ไม่ใช่ firestore.rules)
 
-export const PAGE = {
-  REGISTRY: "registry",
-  DETAIL_CREATE: "detailCreate",
-  ASSIGN: "assign",
-  PROGRESS: "progress"
+export const ROLES = {
+  PM:  { code: "PM",  label: "PM",  desc: "ผู้จัดการโครงการ — ติดตามสถานะความคืบหน้า" },
+  BA:  { code: "BA",  label: "BA",  desc: "นักวิเคราะห์ธุรกิจ — ดูแลทะเบียนหน้าจอและมอบหมายงาน" },
+  SA:  { code: "SA",  label: "SA",  desc: "นักวิเคราะห์ระบบ — ดูแลทะเบียนหน้าจอและมอบหมายงาน" },
+  DEV: { code: "DEV", label: "DEV", desc: "นักพัฒนา — มอบหมายงานและบันทึกความก้าวหน้า" },
+  IMP: { code: "IMP", label: "IMP", desc: "ผู้นำระบบไปใช้ — บันทึกความก้าวหน้า" }
 };
 
-const ROLE_PAGE_ACCESS = {
-  PM: { registry: true, detailCreate: false, assign: false, progress: false },
-  BA: { registry: true, detailCreate: true, assign: true, progress: true },
-  SA: { registry: true, detailCreate: true, assign: true, progress: true },
-  DEV: { registry: true, detailCreate: false, assign: true, progress: true },
-  IMP: { registry: true, detailCreate: false, assign: false, progress: true }
+export const PAGE = { SCR009: "scr-009", SCR010: "scr-010", SCR013: "scr-013", SCR016: "scr-016" };
+
+const PAGE_ACCESS = {
+  PM:  [PAGE.SCR009],
+  BA:  [PAGE.SCR009, PAGE.SCR010, PAGE.SCR013, PAGE.SCR016],
+  SA:  [PAGE.SCR009, PAGE.SCR010, PAGE.SCR013, PAGE.SCR016],
+  DEV: [PAGE.SCR009, PAGE.SCR013, PAGE.SCR016],
+  IMP: [PAGE.SCR009, PAGE.SCR016]
 };
 
-export function canAccessPage(role, page) {
-  const entry = ROLE_PAGE_ACCESS[role];
-  return !!(entry && entry[page]);
+export const canAccessPage = (role, page) => (PAGE_ACCESS[role] || []).includes(page);
+export const canManageRegistry = (role) => role === "BA" || role === "SA";
+export const canAssign = (role) => ["BA", "SA", "DEV"].includes(role);
+export const canRecordProgressRole = (role) => ["BA", "SA", "DEV", "IMP"].includes(role);
+export const isRegistryScoped = (role) => role === "DEV" || role === "IMP";
+
+export function isAssignee(screen, userId) {
+  return !!userId && (screen?.assignees || []).some((a) => a.user_id === userId);
 }
 
-// เพิ่ม/แก้ไข/ลบหน้าจอ — BA/SA เท่านั้น
-export function canManageRegistry(role) {
-  return canAccessPage(role, PAGE.DETAIL_CREATE);
+// DEV ต้องเป็นผู้รับผิดชอบของหน้าจอนั้นอยู่แล้วจึงมอบหมายต่อได้
+export function canAssignFor(role, screen, userId) {
+  if (!canAssign(role)) return false;
+  return role === "DEV" ? isAssignee(screen, userId) : true;
 }
 
-// มอบหมาย/ยกเลิกมอบหมายผู้รับผิดชอบ — BA/SA/DEV
-export function canAssign(role) {
-  return canAccessPage(role, PAGE.ASSIGN);
+// บันทึกความก้าวหน้าได้เฉพาะผู้ถูกมอบหมาย
+export function canRecordProgressFor(role, screen, userId) {
+  return canRecordProgressRole(role) && isAssignee(screen, userId);
 }
 
-// สิทธิ์ระดับบทบาทในการบันทึกความก้าวหน้า (ยังไม่เช็คว่าเป็น assignee ของ
-// หน้าจอนั้นจริงหรือไม่ — ดู canRecordProgressFor)
-export function canRecordProgressRole(role) {
-  return canAccessPage(role, PAGE.PROGRESS);
-}
-
-// DEV/IMP ต้องเห็น/ทำงานเฉพาะหน้าจอที่ตนถูกมอบหมายเท่านั้น (ACL.md หมายเหตุ 1)
-export function isRegistryScoped(role) {
-  return role === "DEV" || role === "IMP";
-}
-
-export function isAssignee(screenData, userId) {
-  const assignees = (screenData && screenData.assignees) || [];
-  return assignees.some(function (a) { return a.user_id === userId; });
-}
-
-// บันทึกความก้าวหน้าได้เฉพาะผู้ถูกมอบหมายจริง ไม่ว่าจะมีบทบาทใด (ACL.md หมายเหตุ 3)
-export function canRecordProgressFor(role, screenData, userId) {
-  return canRecordProgressRole(role) && isAssignee(screenData, userId);
-}
-
-// กรองรายการหน้าจอตามขอบเขตการมองเห็นของ role (ACL.md หมายเหตุ 1/2) —
-// PM/BA/SA เห็นทั้งหมด, DEV/IMP เห็นเฉพาะที่ตนถูกมอบหมาย
 export function filterScreensForRole(screens, role, userId) {
-  if (!isRegistryScoped(role)) return screens;
-  return screens.filter(function (s) { return isAssignee(s, userId); });
+  const list = (screens || []).filter((s) => !s.is_deleted);
+  return isRegistryScoped(role) ? list.filter((s) => isAssignee(s, userId)) : list;
 }
 
 export function denyAccessAndRedirect() {
-  window.showToast("ขออภัยคุณไม่มีสิทธิ์เข้าถึงหน้าจอนี้ เรากำลังนำท่านไปยังหน้าจอที่ท่านมีสิทธิ์เข้าถึง", "danger");
-  setTimeout(function () { window.location.href = "scr-009.html"; }, 1500);
+  import("./common.js").then(({ showToast }) =>
+    showToast("คุณไม่มีสิทธิ์เข้าถึงหน้านี้ กำลังกลับไปทะเบียนหน้าจอ", "warning"));
+  setTimeout(() => { location.href = "scr-009.html"; }, 1500);
 }
