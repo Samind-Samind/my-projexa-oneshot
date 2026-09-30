@@ -33,14 +33,15 @@
         <label for="description">คำอธิบาย</label>
         <textarea id="description" rows="4" placeholder="อธิบายหน้าที่ของหน้าจอ (ใช้เป็นข้อมูลให้ AI แนะนำประเภท)"></textarea>
       </div>
-      <div class="field">
-        <label for="type">ประเภทหน้าจอ</label>
+      <div class="field" id="f-type">
+        <label for="type">ประเภทหน้าจอ <span class="required">*</span></label>
         <div class="row">
           <select id="type"><option value="">— เลือกประเภท —</option></select>
           <button type="button" class="btn btn-secondary" id="btn-ai">ให้ AI ช่วยแนะนำประเภท</button>
           <span class="spinner hidden" id="ai-spinner"></span>
         </div>
         <div class="field-hint" id="type-hint"></div>
+        <div class="field-error"></div>
       </div>
       <div id="ai-area"></div>
       <div id="meta-area" class="kv-list"></div>

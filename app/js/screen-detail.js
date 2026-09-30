@@ -105,9 +105,11 @@ async function validate() {
   let ok = true;
   const code = $("code").value.trim();
   const name = $("name").value.trim();
-  setError("f-code", ""); setError("f-name", "");
+  const typeCode = $("type").value;
+  setError("f-code", ""); setError("f-name", ""); setError("f-type", "");
   if (!code) { setError("f-code", "กรุณากรอกรหัสหน้าจอ"); ok = false; }
   if (!name) { setError("f-name", "กรุณากรอกชื่อหน้าจอ"); ok = false; }
+  if (!types.some((t) => t.code === typeCode)) { setError("f-type", "กรุณาเลือกประเภทหน้าจอ"); ok = false; }
   if (code) {
     const snap = await getDocs(query(collection(db, "screens"), where("code", "==", code)));
     const dup = snap.docs.some((d) => d.id !== screenId && !d.data().is_deleted);
@@ -274,6 +276,7 @@ $("screen-form").addEventListener("submit", onSave);
 $("btn-ai").addEventListener("click", onAi);
 $("ai-area").addEventListener("click", onAiArea);
 $("type").addEventListener("change", () => {
+  if ($("type").value) setError("f-type", "");
   if ($("type").value !== aiConfirmedType) {
     if (aiConfirmedType) aiConfirmedType = null;
     if (isEdit && $("type").value === (loaded.type?.type_id || "")) {
