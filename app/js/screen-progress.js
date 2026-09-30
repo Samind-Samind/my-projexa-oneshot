@@ -92,9 +92,11 @@ async function init() {
             <div class="field-hint">จำเป็นเมื่อเลือกสถานะที่ย้อนกลับจากสถานะปัจจุบัน</div>
             <div class="field-error" id="reason-error"></div>
           </div>
-          <div class="field">
-            <label for="note">หมายเหตุ (ไม่บังคับ)</label>
+          <div class="field" id="note-field">
+            <label for="note">หมายเหตุ <span class="required hidden" id="note-req">*</span></label>
             <textarea id="note" rows="2" maxlength="500"></textarea>
+            <div class="field-hint">ไม่บังคับ ยกเว้นเมื่อบันทึกโดยไม่เปลี่ยนสถานะ</div>
+            <div class="field-error" id="note-error"></div>
           </div>
           <div class="form-actions">
             <button type="submit" class="btn btn-primary" id="btn-save" disabled>บันทึก</button>
@@ -126,14 +128,20 @@ async function init() {
     const field = document.getElementById("reason-field");
     const errEl = document.getElementById("reason-error");
     const reqMark = document.getElementById("reason-req");
+    const noteField = document.getElementById("note-field");
+    const noteErr = document.getElementById("note-error");
+    const noteReq = document.getElementById("note-req");
 
     const isBack = () => selected && STATUSES.indexOf(selected) < STATUSES.indexOf(cur);
+    const isSame = () => selected === cur;
     function sync() {
-      saveBtn.disabled = !selected || selected === cur;
+      saveBtn.disabled = !selected;
       reqMark.classList.toggle("hidden", !isBack());
       if (!isBack()) { field.classList.remove("has-error"); errEl.textContent = ""; }
+      noteReq.classList.toggle("hidden", !isSame());
+      if (!isSame()) { noteField.classList.remove("has-error"); noteErr.textContent = ""; }
       stepper.querySelectorAll(".step").forEach((el) => {
-        const chosen = el.dataset.status === selected && selected !== cur;
+        const chosen = el.dataset.status === selected;
         el.style.outline = chosen ? "2px solid currentColor" : "";
         el.style.outlineOffset = chosen ? "2px" : "";
         el.style.borderRadius = "8px";
@@ -152,11 +160,21 @@ async function init() {
     reason.addEventListener("input", () => {
       if (reason.value.trim()) { field.classList.remove("has-error"); errEl.textContent = ""; }
     });
+    note.addEventListener("input", () => {
+      if (note.value.trim()) { noteField.classList.remove("has-error"); noteErr.textContent = ""; }
+    });
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
-      if (!selected || selected === cur) return;
+      if (!selected) return;
       const reasonVal = reason.value.trim();
+      const noteVal = note.value.trim();
+      if (isSame() && !noteVal) {
+        noteField.classList.add("has-error");
+        noteErr.textContent = "กรุณากรอกหมายเหตุเมื่อบันทึกโดยไม่เปลี่ยนสถานะ";
+        note.focus();
+        return;
+      }
       if (isBack() && !reasonVal) {
         field.classList.add("has-error");
         errEl.textContent = "กรุณาระบุเหตุผลเมื่อย้อนสถานะ";
@@ -183,7 +201,7 @@ async function init() {
           old_status: fresh.data().current_status || "NotStarted",
           new_status: selected,
           reason: reasonVal || null,
-          note: note.value.trim() || null,
+          note: noteVal || null,
         });
         batch.update(screenRef, { current_status: selected, updated_at: now });
         await batch.commit();

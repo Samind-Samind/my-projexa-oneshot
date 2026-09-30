@@ -1,6 +1,8 @@
 # Projexa
 
-🔗 **ทดลองใช้งาน:** [https://projexa-b3a6a.web.app/login](https://projexa-b3a6a.web.app/login)
+🔗 **เว็บออนไลน์:** [https://projexa-oneshot.web.app/login](https://projexa-oneshot.web.app/login)
+
+🧪 **ผลการทดสอบ:** [docs/03-testing/02-test-result/test-results.md](docs/03-testing/02-test-result/test-results.md)
 
 **Projexa** คือระบบบริหารโครงการและเอกสารที่ขับเคลื่อนด้วย TOR (Terms of Reference) แนวคิดหลักคือเปลี่ยนแกนการทำงานของทีมจาก "เอกสารเป็นศูนย์กลาง" เป็น "ข้อมูลเป็นศูนย์กลาง" — ข้อมูลถูกกรอกเพียงครั้งเดียว และเอกสารส่งมอบทุกฉบับ (REQ, SDD, TSC, User Manual) คือ "มุมมอง" ที่ถูก generate ออกมาจากชุดข้อมูลเดียวกัน โดยเริ่มต้นจากการอัปโหลดไฟล์ TOR
 
