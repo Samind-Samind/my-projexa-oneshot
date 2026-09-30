@@ -10,7 +10,8 @@
   "license": "ISC",
   "description": "Playwright end-to-end tests for Projexa on Firebase Hosting",
   "devDependencies": {
-    "@playwright/test": "^1.63.0"
+    "@playwright/test": "^1.63.0",
+    "firebase": "^12.19.0"
   },
   "private": true
 }
